@@ -13,13 +13,13 @@ import tempfile
 UUID = 'lux-capacitor@extensions'
 assert os.geteuid() != 0, 'Run as a normal user (or runuser -u nobody in a container)'
 artifact = pathlib.Path(sys.argv[1]).resolve()
-payload = artifact.read_bytes().split(b'__AUTO_BRIGHTNESS_PAYLOAD__\n', 1)[1]
+payload = artifact.read_bytes().split(b'__LUX_CAPACITOR_PAYLOAD__\n', 1)[1]
 
 with tempfile.TemporaryDirectory() as directory:
     root = pathlib.Path(directory)
     with tarfile.open(fileobj=io.BytesIO(payload), mode='r:gz') as archive:
         archive.extractall(root, filter='data')
-    source = root / 'Auto-Brightness'
+    source = root / 'Lux-Capacitor'
     for line in (source / 'SHA256SUMS').read_text().splitlines():
         digest, name = line.split('  ', 1)
         assert hashlib.sha256((source / name).read_bytes()).hexdigest() == digest
@@ -59,9 +59,10 @@ exit 1
         prelude = f'''from gi.repository import Gio
 import json
 schema_source = Gio.SettingsSchemaSource.new_from_directory({str(source / UUID / 'schemas')!r}, Gio.SettingsSchemaSource.get_default(), False)
-brightness = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions.adaptive-brightness', False), None, None)
+brightness = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions.lux-capacitor', False), None, None)
 shell = Gio.Settings.new('org.gnome.shell')
 media = Gio.Settings.new('org.gnome.settings-daemon.plugins.media-keys')
+earlier = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions.lux-capacitor.keys', False), None, '/org/gnome/shell/extensions/adaptive-brightness/')
 '''
         p = subprocess.run(['dbus-run-session', '--', 'python3', '-c', prelude + code],
                            env=env, text=True, capture_output=True, check=True, timeout=20)
@@ -91,7 +92,7 @@ media = Gio.Settings.new('org.gnome.settings-daemon.plugins.media-keys')
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     state = json.loads(settings("print(json.dumps([brightness.get_boolean('enabled'), brightness.get_boolean('keyboard-auto-enabled'), brightness.get_string('anchors')]))"))
     assert state == [False, False, '[{"lux":40,"brightness":0.7}]'], state
-    backups = list((root / 'state/adaptive-brightness').glob('*/extension/extension.js'))
+    backups = list((root / 'state/lux-capacitor').glob('*/extension/extension.js'))
     assert any(p.read_text() == '// previous extension\n' for p in backups), 'Previous extension was not backed up'
     assert (target / 'extension.js').read_bytes() == (source / UUID / 'extension.js').read_bytes()
     print('PASS: upgrade preserves manual settings and calibration and backs up the previous extension')
@@ -111,9 +112,23 @@ media = Gio.Settings.new('org.gnome.settings-daemon.plugins.media-keys')
     state = json.loads(settings("print(json.dumps(brightness.get_string('anchors')))"))
     assert state == '[{"lux":40,"brightness":0.7}]', 'Settings were lost when the extension ID changed'
     for name in legacy_uuids:
-        backups = list((root / 'state/adaptive-brightness').glob(f'*/legacy-extension-{name}/extension.js'))
+        backups = list((root / 'state/lux-capacitor').glob(f'*/legacy-extension-{name}/extension.js'))
         assert any(p.read_text() == f'// {name}\n' for p in backups), f'{name} was not backed up'
     print('PASS: upgrade from both previous extension IDs removes them, keeps settings, and backs them up')
+
+    # Releases up to 0.2.5 stored settings and backups under the earlier name.
+    settings("brightness.reset('anchors')\nbrightness.set_int('keyboard-dark-lux', 30)\n"
+             "earlier.set_string('anchors', '[{\"lux\":5,\"brightness\":0.2}]')\nearlier.set_int('keyboard-dark-lux', 50)\n"
+             "earlier.set_boolean('dim-on-battery', True)\nGio.Settings.sync()\n")
+    (root / 'state/lux-capacitor').rename(root / 'state/adaptive-brightness')
+    renamed = install()
+    assert renamed.returncode == 0, renamed.stdout + renamed.stderr
+    state = json.loads(settings("print(json.dumps([brightness.get_string('anchors'), brightness.get_int('keyboard-dark-lux'), brightness.get_boolean('dim-on-battery'), [k for k in ('anchors', 'keyboard-dark-lux', 'dim-on-battery') if earlier.get_user_value(k) is not None]]))"))
+    assert state == ['[{"lux":5,"brightness":0.2}]', 30, True, []], state
+    assert not (root / 'state/adaptive-brightness').exists() and \
+        list((root / 'state/lux-capacitor').glob('*/legacy-extension-*')), 'Earlier backups were not moved'
+    settings("brightness.set_string('anchors', '[{\"lux\":40,\"brightness\":0.7}]')\nGio.Settings.sync()\n")
+    print('PASS: settings and backups stored under the earlier name move to the current one, and newer values win')
 
     gnome51 = install('51.0')
     assert gnome51.returncode == 0, gnome51.stdout + gnome51.stderr
