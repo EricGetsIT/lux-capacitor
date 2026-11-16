@@ -26,6 +26,12 @@ const KeyboardProxy = Gio.DBusProxy.makeProxyWrapper(KEYBOARD_XML);
 // so its level shows until the next poll replaces it with the preset.
 // Polling often keeps that firmware flash short.
 const POLL_MS = 50;
+// Nobody presses Fn+Space while away, so read less often once there has been
+// no input and no keyboard light change for a while. Fn+Space is not input
+// to the OS: the first press after that can show the firmware's level for up
+// to IDLE_POLL_MS, and it brings the fast polling back.
+const IDLE_POLL_MS = 250;
+const POLL_IDLE_AFTER_MS = 10_000;
 const RAMP_MS = 100;
 // The exponential fade crawls near its target, which left the light
 // lingering at a few percent for seconds. Never move slower than this.
@@ -115,8 +121,6 @@ export function automaticKeyboardTarget(lux, wasLit = false, darkLux = DEFAULT_D
 
 /** GNOME 50 keyboard-backlight control, including firmware hotkey fallback. */
 export class KeyboardController {
-    static MANUAL_LEVELS = MANUAL_LEVELS;
-
     constructor({settings, onChanged = () => {}, onManualChanged = () => {},
         isDimming = () => false, idleMonitor = null}) {
         this._settings = settings;
@@ -189,6 +193,7 @@ export class KeyboardController {
         this._busChangeUntil = 0;
         this._guardResume();
         this._pollPending = false;
+        this._pollFailed = false;
         this._cancellable = new Gio.Cancellable();
         this._sleepSignalId = Gio.DBus.system.signal_subscribe(
             'org.freedesktop.login1', 'org.freedesktop.login1.Manager',
@@ -212,10 +217,10 @@ export class KeyboardController {
             null, Gio.DBusSignalFlags.NONE, (_connection, _sender, _path,
                 _interface, _signal, parameters) =>
                 this._onPowerSignal(...parameters.deep_unpack()));
-        this._pollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_MS, () => {
-            this._pollActual();
-            return GLib.SOURCE_CONTINUE;
-        });
+        this._pollStopped = false;
+        this._userIdle = false;
+        this._setPollInterval(POLL_MS);
+        this._watchPollIdle();
         this._pollActual();
         this._connectProxy();
         this._changed();
@@ -230,6 +235,8 @@ export class KeyboardController {
         this._stopRamp();
         this._stopWakeHold();
         this._pollId = removeSource(this._pollId);
+        this._pollMs = 0;
+        this._unwatchPollIdle();
         this._retryId = removeSource(this._retryId);
         if (this._settingsId)
             this._settings.disconnect(this._settingsId);
@@ -261,6 +268,59 @@ export class KeyboardController {
     _guardResume() {
         this._resumeGuardUntil = GLib.get_monotonic_time() + RESUME_GUARD_US;
         this._lastFirmwareEvent = null;
+        this._keepPollingFast();
+    }
+
+    _setPollInterval(ms) {
+        if (!this._enabled || this._pollStopped || (this._pollId && this._pollMs === ms))
+            return;
+        removeSource(this._pollId);
+        this._pollMs = ms;
+        this._pollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+            this._pollActual();
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    // Poll fast while the keyboard light is changing or was just changed,
+    // whether or not the user counts as idle: our own fades are told apart
+    // from Fn+Space by reading the level often.
+    _keepPollingFast() {
+        this._setPollInterval(POLL_MS);
+        removeSource(this._pollSlowId);
+        this._pollSlowId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_IDLE_AFTER_MS, () => {
+            this._pollSlowId = 0;
+            if (this._userIdle)
+                this._setPollInterval(IDLE_POLL_MS);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _watchPollIdle() {
+        if (!this._idleMonitor)
+            return;
+        this._pollIdleWatchId = this._idleMonitor.add_idle_watch(POLL_IDLE_AFTER_MS, () => {
+            this._userIdle = true;
+            if (!this._pollSlowId)
+                this._setPollInterval(IDLE_POLL_MS);
+            // User-active watches fire once and are removed by Mutter.
+            this._pollActiveWatchId ||= this._idleMonitor.add_user_active_watch(() => {
+                this._pollActiveWatchId = 0;
+                this._userIdle = false;
+                this._setPollInterval(POLL_MS);
+            });
+        });
+    }
+
+    _unwatchPollIdle() {
+        this._pollSlowId = removeSource(this._pollSlowId);
+        if (this._pollIdleWatchId)
+            this._idleMonitor.remove_watch(this._pollIdleWatchId);
+        if (this._pollActiveWatchId)
+            this._idleMonitor.remove_watch(this._pollActiveWatchId);
+        this._pollIdleWatchId = 0;
+        this._pollActiveWatchId = 0;
+        this._userIdle = false;
     }
 
     _beginWakeHold() {
@@ -667,10 +727,21 @@ export class KeyboardController {
                     return;
                 level = fromHardware(Number(raw));
             } catch (error) {
-                if (!this._cancellable?.is_cancelled())
+                if (this._cancellable?.is_cancelled())
+                    return;
+                if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND)) {
+                    // Not a Framework keyboard. Stop instead of failing and
+                    // logging on every poll; enabling again retries.
+                    console.warn(`Lux Capacitor: no keyboard backlight at ${BACKLIGHT_PATH}`);
+                    this._pollId = removeSource(this._pollId);
+                    this._pollStopped = true;
+                } else if (!this._pollFailed) {
                     console.error(`Lux Capacitor: keyboard read failed: ${error}`);
+                }
+                this._pollFailed = true;
                 return;
             }
+            this._pollFailed = false;
             // A read started before a notification may contain the old level.
             // Let the next poll sample fresh state instead of inventing a hotkey.
             if (notificationSerial === this._notificationSerial)
@@ -713,6 +784,7 @@ export class KeyboardController {
             this._showOverriddenLevel(level);
             return;
         }
+        this._keepPollingFast();
         if (GLib.get_monotonic_time() < this._resumeGuardUntil) {
             this._observeRestoredLevel(level);
             return;
@@ -812,6 +884,7 @@ export class KeyboardController {
         const level = this._desiredWrite;
         this._desiredWrite = null;
         this._writeInFlight = level;
+        this._keepPollingFast();
         const serial = ++this._writeSerial;
         this._lastRequested = level;
         this._ownWrites.push({

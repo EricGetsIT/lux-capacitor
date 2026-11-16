@@ -8,7 +8,7 @@ if (( EUID == 0 )); then
     exit 1
 fi
 source /etc/os-release
-echo 'AUTO BRIGHTNESS — guided installation'
+echo 'LUX CAPACITOR — guided installation'
 echo 'Screen and keyboard Auto, manual presets, percentage displays, and wake-up recovery.'
 version=$(gnome-shell --version 2>/dev/null || true)
 if [[ ! "$version" =~ GNOME\ Shell\ 5[01]([.]|$) ]]; then

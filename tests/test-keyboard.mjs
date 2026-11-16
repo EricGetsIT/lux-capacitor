@@ -619,6 +619,87 @@ test('Battery dimming keeps learned preferences undimmed and exact', () => {
     assert(Math.abs(targets.at(-1) - 0.6) < 1e-9, 'preference was not restored on AC power');
 });
 
+test('A small or slow screen fade reaches its target instead of stalling', () => {
+    // Steps under the write threshold were skipped and then repeated from the
+    // same slider value, so the 15% battery dimming never reached the screen.
+    for (const [speed, from, to] of [['normal', 0.43, 0.43 * 0.85], ['subtle', 0.6, 0.5],
+        ['normal', 0.5, 0.51], ['fast', 0.2, 0.9]]) {
+        const {e} = screenFixture();
+        const scale = {value: from};
+        Object.assign(e, {_speed: speed, _target: to, _level: null, _holdUntil: 0, _timerId: 1,
+            _manager: {globalScale: scale, autoBrightnessTarget: -1, _inhibitUpdates: false, _sync() {}}});
+        let ticks = 0;
+        let running = true;
+        // Simulate 100 ms ticks for up to a minute.
+        while (running && ticks < 600) {
+            e._lastTick = GLib.get_monotonic_time() - 100_000;
+            running = e._tick() === GLib.SOURCE_CONTINUE;
+            ticks++;
+        }
+        assert(!running && !e._timerId && Math.abs(scale.value - to) <= 0.003,
+            `${speed} fade ${from} -> ${to} stopped at ${scale.value} after ${ticks} ticks`);
+    }
+    const {e} = screenFixture();
+    const scale = {value: 0.8};
+    Object.assign(e, {_speed: 'normal', _target: 0.3, _level: null, _holdUntil: 0, _timerId: 1,
+        _manager: {globalScale: scale, autoBrightnessTarget: -1, _inhibitUpdates: false, _sync() {}}});
+    e._lastTick = GLib.get_monotonic_time() - 100_000;
+    e._tick();
+    scale.value = 0.4;
+    e._lastTick = GLib.get_monotonic_time() - 100_000;
+    e._tick();
+    assert(scale.value < 0.4 && scale.value > 0.39, 'the fade ignored a slider value changed from outside');
+});
+
+test('A missing keyboard backlight stops polling instead of failing on every poll', () => {
+    const {c} = fixture(true, 0);
+    c._file = {
+        load_contents_async(_cancel, callback) { callback(this, {}); },
+        load_contents_finish() {
+            throw new GLib.Error(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND, 'No such file');
+        },
+    };
+    c._pollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 60_000, () => GLib.SOURCE_REMOVE);
+    c._pollActual();
+    assert(c._pollId === 0 && !c._pollPending, 'polling continued without a keyboard backlight');
+});
+
+test('The keyboard level is read less often while idle and fast again on any change', () => {
+    const settings = {ints: {'keyboard-idle-timeout': 0, 'keyboard-dark-lux': 10},
+        get_boolean: () => false, get_int(key) { return this.ints[key]; }};
+    const watches = {};
+    let nextId = 1;
+    const monitor = {
+        add_idle_watch(ms, callback) { watches.idle = [ms, callback]; return nextId++; },
+        add_user_active_watch(callback) { watches.active = callback; return nextId++; },
+        remove_watch() {},
+    };
+    const c = new KeyboardController({settings, idleMonitor: monitor});
+    c._file = {load_contents_async() {}};
+    Object.assign(c, {_enabled: true, _pollStopped: false, _userIdle: false, _available: true});
+    c._requestWrite = () => {};
+    c.setAutoEnabled = () => {};
+    c._setPollInterval(50);
+    c._watchPollIdle();
+    assert(c._pollMs === 50 && watches.idle[0] === 10_000, 'polling did not start fast');
+    watches.idle[1]();
+    assert(c._pollMs === 250, 'polling did not slow down while idle');
+    c._onActualLevel(0);
+    c._onActualLevel(20);
+    assert(c._pollMs === 50 && c._pollSlowId, 'a keyboard change while idle did not restore fast polling');
+    c._pollSlowId = GLib.source_remove(c._pollSlowId) && 0;
+    watches.idle[1]();
+    assert(c._pollMs === 250, 'polling did not slow down again');
+    watches.active();
+    assert(c._pollMs === 50 && !c._userIdle, 'input did not restore fast polling');
+    c._pollStopped = true;
+    watches.idle[1]();
+    assert(c._pollMs === 50, 'polling restarted after it was stopped for a missing backlight');
+    c._enabled = true;
+    c._pollId = GLib.source_remove(c._pollId) && 0;
+    c._unwatchPollIdle();
+});
+
 test('Resetting learned brightness from the settings window reaches the extension', () => {
     const {e, values, targets, sense, drag} = screenFixture();
     sense(60);
