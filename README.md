@@ -14,7 +14,7 @@ Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyb
 | --- | --- |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 45, GNOME Shell 51 | v0.2.5: I recorded the Keyboard tile, the keyboard slider, Fn+Space and keyboard Auto on my laptop. v0.2.4: I checked screen Auto and learning, the brightness keys, volume, Quick Settings, lock, suspend and resume, and the settings window. The automated checks pass on Fedora 45. |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 44, GNOME Shell 50 | v0.2.1: I recorded keyboard Auto and Fn+Space on my laptop and confirmed them. Earlier versions: screen brightness, keyboard controls, and recovery after suspend. |
-| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | I used it on my laptop up to v0.1.2. I haven't tested v0.2.x on Ubuntu hardware yet; the automated checks pass. |
+| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | v0.2.6: I checked dimming on battery and the lock screen on my laptop. I used it on my laptop up to v0.1.2 and haven't tested the rest of v0.2.x on Ubuntu hardware yet; the automated checks pass. |
 | Other Framework models | I haven't tested these yet. They need compatible light-sensor and keyboard-backlight interfaces. |
 | GNOME versions other than 50 and 51, or KDE, Xfce, Cinnamon | Not supported by this release. |
 | Other laptops with GNOME 50 or 51 | Not hardware-tested. Screen control needs an ambient-light sensor supported by iio-sensor-proxy. Keyboard behavior targets Framework's `chromeos::kbd_backlight` interface. |
@@ -27,6 +27,8 @@ I installed this repeatedly on the same Framework laptop while switching between
 - Small light-sensor fluctuations are ignored, so the screen only moves when the light really changes.
 - Learned preferences persist across logins and reboots. Turning screen Auto off resets them to the default curve.
 - Separate screen and keyboard Auto controls.
+- Keeps working on the lock screen, so waking the laptop in a dark room never lights the screen up at full brightness. The Auto switches are hidden until you unlock.
+- Knows when the lid is closed. When the laptop keeps running with the lid shut (for example, docked to an external monitor), it releases the light sensor, which would otherwise read the darkness under the lid, and turns the keyboard light off. Everything resumes when you open the lid.
 - A settings window (Extensions app → Lux Capacitor → Settings) with transition speed, light sensitivity, minimum and maximum Auto brightness, slight dimming on battery, a graph of the learned brightness curve, and a reset button.
 - Keyboard settings: turn the light off after a chosen idle time (only when Auto turned it on), and the light level below which keyboard Auto lights the keyboard. Fn+Space and the keyboard slider still switch to a manual level and turn keyboard Auto off.
 - Fn+Space steps through 0%, 20%, 50%, 75%, and 100%, and turns keyboard Auto off. The laptop's firmware handles Fn+Space itself with its own levels, so its level can flash for a moment (under about 75 ms) before Lux Capacitor sets the step. After 10 seconds without input or a keyboard light change, Lux Capacitor checks the keyboard less often to save power, so the first press after that can flash for up to about 0.3 s.
