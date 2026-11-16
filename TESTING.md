@@ -32,6 +32,8 @@ On 2026-10-23 I also tested the keyboard idle timeout with 0.2.5 (30 seconds, se
 
 Dimming on battery doesn't work in 0.2.5 ([issue #6](https://github.com/iErick17/lux-capacitor/issues/6)). Screen Auto used the same brightness on battery as on AC, including right after restarting the extension on battery. The screen does look dimmer on battery, but that comes from AMD panel power savings, which Fedora's battery power profile turns on.
 
+After 0.2.5 I found the cause in the code: a screen fade whose 100 ms steps were smaller than 0.3% repeated the same skipped step and never moved, which at Normal speed stopped any dimming of less than about 7.6%, including the 15% battery reduction at ordinary indoor light. The fix and its regression check are in the source but not released. On 2026-11-16 I installed that source on my Framework Laptop 13 (Ubuntu 26.04.1, GNOME Shell 50.1) with Slightly dim on battery turned on, and the screen got dimmer when I unplugged the charger. On battery at 163 lux the requested backlight (`amdgpu_bl1/brightness` ÷ 65535) was 0.56; the curve gives 0.63 without the reduction and 0.54 with it. That was a single reading, not a recording of unplugging and plugging in. The same installation moved my settings and installation backups from the name `adaptive-brightness` to `lux-capacitor`; all settings were at their defaults, so it didn't show a changed value surviving the move. One other unreleased change is not checked on hardware yet: the keyboard level is read every 250 ms instead of every 50 ms after 10 seconds without input or a keyboard light change, so the first Fn+Space press after that can show the firmware's level for longer.
+
 Not yet checked on hardware for 0.2.x: anything on Ubuntu.
 
 My laptop is a Framework Laptop 13 (AMD Ryzen AI 300 Series), currently running Fedora Workstation 45 with GNOME Shell 51.0. I've also used it with Fedora Workstation 44 (GNOME Shell 50.6) and Ubuntu 26.04.1 (GNOME Shell 50). I haven't tested other Framework models. On Fedora Workstation 44 I confirmed the following on 2026-10-11:
@@ -46,9 +48,9 @@ I've installed this same version 7 code multiple times on this Framework laptop 
 
 `bash tests/run.sh` compiles the schema in a temporary directory, validates JavaScript syntax, checks the brightness policy (including that learned preferences never dim the screen in brighter light and stay exact at their own light level), and runs keyboard and screen regressions against mocks. Screen regressions cover the sensor-noise dead zone, saving a slider drag once, resetting preferences when Auto is turned off, saving on lock, and cleaning up stored contradictions. These cover preset remapping, duplicate firmware signals, manual takeover, sensor response, idle dimming, stale hardware reads, and numeric UI feedback, and volume slider OSD feedback with backend synchronization and disable/re-enable cleanup. OSD regressions also cover rapid level reversals, multiple monitors, amplified volume, and preservation of unrelated OSD animations.
 
-The GitHub workflow runs the software checks in Ubuntu 26.04 and Fedora 44 containers. Container checks cannot verify real light sensors, physical hotkeys, or suspend/resume. Both container jobs passed in [this GitHub Actions run](https://github.com/iErick17/lux-capacitor/actions/runs/38150099547).
+The GitHub workflow runs the software checks in Ubuntu 26.04, Fedora 44, and Fedora 45 containers. Container checks cannot verify real light sensors, physical hotkeys, or suspend/resume. All three container jobs passed in [this GitHub Actions run](https://github.com/iErick17/lux-capacitor/actions/runs/40059011732).
 
-`tests/test-install.py` also checks GNOME-version rejection, fresh installation defaults, and upgrade preservation of settings and backups in an isolated environment. It uses real schemas and settings storage, with package installation, system changes, and live Shell activation mocked. These installer checks passed on both container distributions. I also ran them against the downloaded v0.1.0 installer and verified its published checksums on Ubuntu.
+`tests/test-install.py` also checks GNOME-version rejection, fresh installation defaults, and upgrade preservation of settings and backups in an isolated environment. It uses real schemas and settings storage, with package installation, system changes, and live Shell activation mocked. These installer checks passed in all three containers. I also ran them against the downloaded v0.1.0 installer and verified its published checksums on Ubuntu.
 
 The Quick Settings screenshots in the README show both Auto switches enabled on my Ubuntu installation. They document the interface, not a clean-install or suspend test.
 
@@ -57,7 +59,7 @@ The Quick Settings screenshots in the README show both Auto switches enabled on 
 This is the checklist I use for a clean-install hardware test on each supported distribution:
 
 1. Record `cat /etc/os-release`, `gnome-shell --version`, and the laptop model.
-2. Verify the installer with `bash Install-Auto-Brightness.run --check`.
+2. Verify the installer with `bash Install-Lux-Capacitor.run --check`.
 3. Install as the desktop user, log out and back in, and confirm the extension is enabled.
 4. Cover/uncover the sensor in several lighting conditions. Check smooth screen updates and numeric feedback.
 5. Adjust the screen slider in dim light, then move to brighter light and confirm the screen never gets dimmer. Confirm stored preferences survive login, and that toggling screen Auto off resets them.

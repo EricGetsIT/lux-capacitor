@@ -29,7 +29,7 @@ I installed this repeatedly on the same Framework laptop while switching between
 - Separate screen and keyboard Auto controls.
 - A settings window (Extensions app → Lux Capacitor → Settings) with transition speed, light sensitivity, minimum and maximum Auto brightness, slight dimming on battery, a graph of the learned brightness curve, and a reset button.
 - Keyboard settings: turn the light off after a chosen idle time (only when Auto turned it on), and the light level below which keyboard Auto lights the keyboard. Fn+Space and the keyboard slider still switch to a manual level and turn keyboard Auto off.
-- Fn+Space steps through 0%, 20%, 50%, 75%, and 100%, and turns keyboard Auto off. The laptop's firmware handles Fn+Space itself with its own levels, so its level can flash for a moment (under about 75 ms) before Lux Capacitor sets the step.
+- Fn+Space steps through 0%, 20%, 50%, 75%, and 100%, and turns keyboard Auto off. The laptop's firmware handles Fn+Space itself with its own levels, so its level can flash for a moment (under about 75 ms) before Lux Capacitor sets the step. After 10 seconds without input or a keyboard light change, Lux Capacitor checks the keyboard less often to save power, so the first press after that can flash for up to about 0.3 s.
 - Numeric brightness and volume displays, with brightness and volume OSD bars updating immediately as the Quick Settings sliders move; volume keys use steps of 5.
 - Desktop idle dimming preserves keyboard Auto.
 - Resume recovery reinitializes the Framework `i2c-FRMW0005:*` sensor and restarts iio-sensor-proxy. On other hardware the hook only restarts the sensor service.
@@ -81,11 +81,11 @@ The Framework firmware locks the keyboard light off when Fn+Space turns it off f
 
 ## Install
 
-Download `Install-Auto-Brightness.run` from the [latest release](https://github.com/iErick17/lux-capacitor/releases/latest), then run it as your normal desktop user:
+Download `Install-Lux-Capacitor.run` (named `Install-Auto-Brightness.run` in releases up to 0.2.5) from the [latest release](https://github.com/iErick17/lux-capacitor/releases/latest), then run it as your normal desktop user:
 
 ```sh
-bash Install-Auto-Brightness.run --check
-bash Install-Auto-Brightness.run
+bash Install-Lux-Capacitor.run --check
+bash Install-Lux-Capacitor.run
 ```
 
 The installer checks for GNOME Shell 50 or 51, installs dependencies using apt on Ubuntu or dnf on Fedora, and requests sudo for the system resume hook. Log out and back in afterward. Both Auto controls start enabled on a fresh installation. Existing brightness settings are preserved; the volume step is set to 5.
@@ -94,7 +94,7 @@ From a source checkout, run `bash install.sh` instead.
 
 The extension ZIP can also be installed with `gnome-extensions install --force <file>.shell-extension.zip`, followed by logout/login and `gnome-extensions enable lux-capacitor@extensions`. This installs the extension only: it does not install dependencies, set the volume step, or install the system resume hook.
 
-Since 0.2.2 the extension ID is `lux-capacitor@extensions`. The installer removes copies installed under earlier IDs (after backing them up) so two brightness controllers never run at once, and your settings carry over. If you install the ZIP by hand instead, uninstall the previous version first.
+Since 0.2.2 the extension ID is `lux-capacitor@extensions`. The installer removes copies installed under earlier IDs (after backing them up) so two brightness controllers never run at once. Since 0.2.6 the settings and installation backups are stored under the name `lux-capacitor` instead of `adaptive-brightness`; settings from earlier releases are moved over the first time the new version is installed or enabled. If you install the ZIP by hand instead, uninstall the previous version first.
 
 ## Disable and remove
 
@@ -110,7 +110,7 @@ The system resume hook remains installed. To remove it, if you installed it thro
 sudo rm /usr/lib/systemd/system-sleep/90-restart-iio-sensor-proxy
 ```
 
-Remove the extension through GNOME Extensions or `gnome-extensions uninstall lux-capacitor@extensions`. Disable it first. Installation backups of the previous extension and settings are stored under `~/.local/state/adaptive-brightness/`. Disabling does not restore the volume step; its previous value is in the backup's `desktop-settings.json`.
+Remove the extension through GNOME Extensions or `gnome-extensions uninstall lux-capacitor@extensions`. Disable it first. Installation backups of the previous extension and settings are stored under `~/.local/state/lux-capacitor/`; the installer keeps the five most recent. Disabling does not restore the volume step; its previous value is in the backup's `desktop-settings.json`.
 
 ## Development
 
@@ -119,8 +119,8 @@ Install GJS, Python 3, and GLib tools, then run:
 ```sh
 bash tests/run.sh
 python3 build.py
-bash dist/Install-Auto-Brightness.run --check
-python3 tests/test-install.py "$PWD/dist/Install-Auto-Brightness.run"
+bash dist/Install-Lux-Capacitor.run --check
+python3 tests/test-install.py "$PWD/dist/Install-Lux-Capacitor.run"
 ```
 
 Tests mock keyboard and Quick Settings objects; they do not write hardware brightness or install the extension. The install test runs the installer in a private settings session with package installation and root actions mocked. The build produces a standalone installer, an extension ZIP, and checksums in `dist/`.

@@ -40,6 +40,8 @@ const SCREEN_OPTION_KEYS = ['transition-speed', 'light-sensitivity',
     'screen-min-brightness', 'screen-max-brightness', 'dim-on-battery'];
 
 const POWER_SCHEMA = 'org.gnome.settings-daemon.plugins.power';
+// Releases up to 0.2.5 stored their settings here.
+const LEGACY_SETTINGS_PATH = '/org/gnome/shell/extensions/adaptive-brightness/';
 const TICK_MS = 100;
 const MANUAL_HOLD_US = 1_500_000;
 const EPSILON = 0.003;
@@ -69,11 +71,12 @@ function patchMethod(object, name, wrap) {
     };
 }
 
-export default class AdaptiveBrightnessExtension extends Extension {
+export default class LuxCapacitorExtension extends Extension {
     enable() {
         const afterLock = this._wasLocked === true;
         this._wasLocked = false;
         this._settings = this.getSettings();
+        this._migrateLegacySettings();
         this._powerSettings = new Gio.Settings({schema_id: POWER_SCHEMA});
         this._manager = Main.brightnessManager;
         this._anchors = this._loadAnchors();
@@ -82,9 +85,9 @@ export default class AdaptiveBrightnessExtension extends Extension {
         this._autoEnabled = this._settings.get_boolean('enabled');
         this._lux = null;
         this._targetLux = null;
-        this._rawLevel = null;
         this._unit = null;
         this._target = null;
+        this._level = null;
         this._holdUntil = 0;
         this._lastTick = 0;
         this._timerId = 0;
@@ -199,6 +202,30 @@ export default class AdaptiveBrightnessExtension extends Extension {
         this._settings = null;
         this._powerSettings = null;
         this._sensorCancellable = null;
+    }
+
+    // Move values an earlier release stored under the old settings path.
+    // Values already set under the new path win. setup.sh does the same
+    // for installer upgrades; this covers a ZIP installed by hand.
+    _migrateLegacySettings() {
+        try {
+            const source = Gio.SettingsSchemaSource.new_from_directory(
+                this.dir.get_child('schemas').get_path(),
+                Gio.SettingsSchemaSource.get_default(), false);
+            const schema = source.lookup(`${this._settings.schema_id}.keys`, false);
+            const legacy = new Gio.Settings({settings_schema: schema,
+                path: LEGACY_SETTINGS_PATH});
+            for (const key of schema.list_keys()) {
+                const value = legacy.get_user_value(key);
+                if (value === null)
+                    continue;
+                if (this._settings.get_user_value(key) === null)
+                    this._settings.set_value(key, value);
+                legacy.reset(key);
+            }
+        } catch (error) {
+            console.error(`Lux Capacitor: could not move earlier settings: ${error}`);
+        }
     }
 
     _takeOverNativeAmbient() {
@@ -434,9 +461,12 @@ export default class AdaptiveBrightnessExtension extends Extension {
     }
 
     _connectUPower() {
+        const cancellable = this._sensorCancellable;
         new UPowerProxy(Gio.DBus.system, 'org.freedesktop.UPower',
             '/org/freedesktop/UPower', (proxy, error) => {
-                if (this._destroyed)
+                // A request cancelled by disable() can finish after a quick
+                // re-enable; it belongs to the previous session.
+                if (this._destroyed || cancellable !== this._sensorCancellable)
                     return;
                 if (error) {
                     console.error(`Lux Capacitor: power status unavailable: ${error}`);
@@ -445,7 +475,7 @@ export default class AdaptiveBrightnessExtension extends Extension {
                 this._upower = proxy;
                 proxy.connectObject('g-properties-changed', () => this._onPowerChanged(), this);
                 this._onPowerChanged();
-            }, this._sensorCancellable);
+            }, cancellable);
     }
 
     _onPowerChanged() {
@@ -507,9 +537,10 @@ export default class AdaptiveBrightnessExtension extends Extension {
     }
 
     _connectSensor() {
+        const cancellable = this._sensorCancellable;
         new SensorProxy(Gio.DBus.system, 'net.hadess.SensorProxy',
             '/net/hadess/SensorProxy', (proxy, error) => {
-                if (this._destroyed)
+                if (this._destroyed || cancellable !== this._sensorCancellable)
                     return;
                 if (error) {
                     console.error(`Lux Capacitor: light sensor unavailable: ${error}`);
@@ -531,7 +562,7 @@ export default class AdaptiveBrightnessExtension extends Extension {
                 this._syncToggle();
                 if (this._sensorDesired())
                     this._claimSensor();
-            }, this._sensorCancellable);
+            }, cancellable);
     }
 
     _onSensorOwnerChanged() {
@@ -540,7 +571,6 @@ export default class AdaptiveBrightnessExtension extends Extension {
         this._sensorClaimed = false;
         this._lux = null;
         this._targetLux = null;
-        this._rawLevel = null;
         this._stopTimer();
         if (this._sensor?.get_name_owner() && this._sensorDesired())
             this._claimSensor();
@@ -618,9 +648,8 @@ export default class AdaptiveBrightnessExtension extends Extension {
             this._targetLux = null;
         }
         this._unit = unit;
-        this._rawLevel = rawLevel;
         // SensorProxy's vendor unit is a relative 0-100 reading. Map it to
-        // the curve's 0-1600 range while retaining the reported value in UI.
+        // the curve's 0-1600 range.
         const lux = unit === 'vendor' ? rawLevel * 16 : rawLevel;
         this._lux = lux;
         // Small sensor fluctuations should not keep nudging the screen.
@@ -641,6 +670,7 @@ export default class AdaptiveBrightnessExtension extends Extension {
             return;
         this._target = target;
         if (!this._timerId) {
+            this._level = null;
             this._lastTick = GLib.get_monotonic_time();
             this._timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS,
                 () => this._tick());
@@ -658,15 +688,23 @@ export default class AdaptiveBrightnessExtension extends Extension {
         if (now < this._holdUntil)
             return GLib.SOURCE_CONTINUE;
 
-        const current = this._manager.globalScale.value;
-        if (Math.abs(current - this._target) <= EPSILON) {
+        // _setBrightnessSilently skips steps smaller than EPSILON, so the
+        // slider can trail the fade. Continue from the fade's own position,
+        // or a slow fade would repeat the same skipped step forever. Start
+        // again from the slider if something else has moved it.
+        const shown = this._manager.globalScale.value;
+        const current = this._level !== null && Math.abs(this._level - shown) < EPSILON
+            ? this._level : shown;
+        let next = advanceBrightness(current, this._target, dt, this._speed);
+        const done = Math.abs(next - this._target) <= EPSILON;
+        if (done)
+            next = this._target;
+        this._level = next;
+        this._setBrightnessSilently(next);
+        if (done) {
             this._timerId = 0;
             return GLib.SOURCE_REMOVE;
         }
-        let next = advanceBrightness(current, this._target, dt, this._speed);
-        if (Math.abs(next - this._target) <= EPSILON)
-            next = this._target;
-        this._setBrightnessSilently(next);
         return GLib.SOURCE_CONTINUE;
     }
 
@@ -675,7 +713,15 @@ export default class AdaptiveBrightnessExtension extends Extension {
     }
 
     _enforceKeyStep() {
-        for (const scale of [this._manager.globalScale, ...this._manager.scales]) {
+        const scales = [this._manager.globalScale, ...this._manager.scales];
+        // GNOME replaces its monitor scales when monitors change.
+        for (const [scale, restores] of this._originalKeySteps) {
+            if (!scales.includes(scale)) {
+                restores.forEach(restore => restore());
+                this._originalKeySteps.delete(scale);
+            }
+        }
+        for (const scale of scales) {
             if (!scale || this._originalKeySteps.has(scale))
                 continue;
             // Shell's keybindings call these methods. Setting value normally

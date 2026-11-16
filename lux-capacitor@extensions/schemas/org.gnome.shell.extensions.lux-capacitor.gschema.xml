@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="org.gnome.shell.extensions.adaptive-brightness" path="/org/gnome/shell/extensions/adaptive-brightness/">
+  <!-- The keys have no path of their own, so that settings stored by
+       releases up to 0.2.5 under /org/gnome/shell/extensions/adaptive-brightness/
+       can still be read and moved to the path below. -->
+  <schema id="org.gnome.shell.extensions.lux-capacitor.keys">
     <key name="enabled" type="b">
       <default>true</default>
       <summary>Use ambient light to adjust screen brightness</summary>
@@ -68,4 +71,6 @@
       <summary>Previous GNOME ambient brightness state</summary>
     </key>
   </schema>
+  <schema id="org.gnome.shell.extensions.lux-capacitor" path="/org/gnome/shell/extensions/lux-capacitor/"
+          extends="org.gnome.shell.extensions.lux-capacitor.keys"/>
 </schemalist>
