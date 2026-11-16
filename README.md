@@ -63,7 +63,7 @@ Open Extensions, then Lux Capacitor → Settings, or run `gnome-extensions prefs
 | Light sensitivity | How much the light must change before the screen moves, so small sensor fluctuations are ignored: about 30% (**Low**), 15% (**Normal**), or 7% (**High**). Larger changes always react right away. | Normal |
 | Minimum brightness | Lower limit for Auto's default curve, in percent. Brightness you set yourself is still used exactly, even below it. Raising it above the maximum moves the maximum up too. | 0% |
 | Maximum brightness | Upper limit for Auto's default curve, in percent. Brightness you set yourself is still used exactly, even above it. Lowering it below the minimum moves the minimum down too. | 100% |
-| Slightly dim on battery | **Known issue:** this currently has no effect ([issue #6](https://github.com/iErick17/lux-capacitor/issues/6)). It is meant to reduce Auto brightness to 85% while unplugged. Brightness you set on battery is learned without that reduction, so plugging in brings back your full level. | Off |
+| Slightly dim on battery | While unplugged, Auto brightness is reduced to 85%. Brightness you set on battery is learned without that reduction, so plugging in brings back your full level. | Off |
 | Learned brightness graph | Light level in lux across (log scale, 1 to 1000+), brightness up. The dashed line is the default curve within your limits, the solid line is what Auto actually uses, and each dot is one of your adjustments. | — |
 | Reset Learned Screen Brightness | Forgets all your adjustments and returns to the default curve. Turning screen Auto off in Quick Settings does the same. | — |
 
