@@ -7,6 +7,9 @@ import {advanceBrightness, interpolateLogLux} from './brightnessModel.js';
 const BUS_NAME = 'org.gnome.SettingsDaemon.Power';
 const OBJECT_PATH = '/org/gnome/SettingsDaemon/Power';
 const INTERFACE = 'org.gnome.SettingsDaemon.Power.Keyboard';
+const UPOWER_NAME = 'org.freedesktop.UPower';
+const UPOWER_KEYBOARD = 'org.freedesktop.UPower.KbdBacklight';
+const UPOWER_PATH = '/org/freedesktop/UPower/KbdBacklight';
 const BACKLIGHT_PATH = '/sys/class/leds/chromeos::kbd_backlight/brightness';
 
 const KEYBOARD_XML = `
@@ -21,6 +24,25 @@ const KEYBOARD_XML = `
   </interface>
 </node>`;
 const KeyboardProxy = Gio.DBusProxy.makeProxyWrapper(KEYBOARD_XML);
+
+const UPowerKeyboardProxy = Gio.DBusProxy.makeProxyWrapper(`
+<node>
+  <interface name="${UPOWER_KEYBOARD}">
+    <method name="GetBrightness"><arg type="i" direction="out"/></method>
+    <method name="GetMaxBrightness"><arg type="i" direction="out"/></method>
+    <method name="SetBrightness"><arg type="i" direction="in"/></method>
+  </interface>
+</node>`);
+
+function rawBrightness(level, max) {
+    return Math.round(toHardware(level) * max / 100);
+}
+
+function scaledLevel(raw, max) {
+    if (max <= 0 || !Number.isInteger(raw) || raw < 0 || raw > max)
+        return null;
+    return fromHardware(Math.round(raw * 100 / max));
+}
 
 // Fn+Space is handled by the EC and never reaches the OS as a key event,
 // so its level shows until the next poll replaces it with the preset.
@@ -91,8 +113,10 @@ function validLevel(level) {
     return fromHardware(clampLevel(level));
 }
 
-function nextLevel(current) {
-    return MANUAL_LEVELS.find(level => level > current) ?? MANUAL_LEVELS[0];
+function nextLevel(current, max) {
+    // Several presets can round to the same step on a coarse keyboard.
+    return MANUAL_LEVELS.find(level => level > current &&
+        (max >= 100 || rawBrightness(level, max) > rawBrightness(current, max))) ?? MANUAL_LEVELS[0];
 }
 
 function previousLevel(current) {
@@ -122,11 +146,13 @@ export function automaticKeyboardTarget(lux, wasLit = false, darkLux = DEFAULT_D
     return {lit, target: lit ? keyboardTarget(scaled) : 0};
 }
 
-/** GNOME 50 keyboard-backlight control, including firmware hotkey fallback. */
+/** Keyboard-backlight control, including firmware hotkey fallback. */
 export class KeyboardController {
-    constructor({settings, onChanged = () => {}, onManualChanged = () => {},
+    constructor({settings, backend = 'gnome', onChanged = () => {}, onManualChanged = () => {},
         isDimming = () => false, idleMonitor = null}) {
         this._settings = settings;
+        this._backend = backend;
+        this._hardwareMax = backend === 'upower' ? 0 : 100;
         this._idleMonitor = idleMonitor;
         this._idleWatchId = 0;
         this._activeWatchId = 0;
@@ -217,8 +243,7 @@ export class KeyboardController {
             this._settings.connect(`changed::${key}`, () => this._onOptionsChanged()));
         this._watchIdle();
         this._powerSignalId = Gio.DBus.system.signal_subscribe(
-            'org.freedesktop.UPower', 'org.freedesktop.UPower.KbdBacklight',
-            'BrightnessChangedWithSource', '/org/freedesktop/UPower/KbdBacklight',
+            UPOWER_NAME, UPOWER_KEYBOARD, 'BrightnessChangedWithSource', UPOWER_PATH,
             null, Gio.DBusSignalFlags.NONE, (_connection, _sender, _path,
                 _interface, _signal, parameters) =>
                 this._onPowerSignal(...parameters.deep_unpack()));
@@ -535,16 +560,16 @@ export class KeyboardController {
         if (!this._enabled)
             return;
         const generation = this._generation;
-        new KeyboardProxy(Gio.DBus.session, BUS_NAME, OBJECT_PATH,
-            (proxy, error) => {
-                if (!this._enabled || generation !== this._generation)
-                    return;
-                if (error) {
-                    console.error(`Lux Capacitor: keyboard service unavailable: ${error}`);
-                    this._scheduleRetry();
-                    return;
-                }
-                this._proxy = proxy;
+        const ready = (proxy, error) => {
+            if (!this._enabled || generation !== this._generation)
+                return;
+            if (error) {
+                console.error(`Lux Capacitor: keyboard service unavailable: ${error}`);
+                this._scheduleRetry();
+                return;
+            }
+            this._proxy = proxy;
+            if (this._backend === 'gnome') {
                 this._signalId = proxy.connect('g-signal',
                     (_proxy, _sender, signal, parameters) =>
                         this._onProxySignal(signal, parameters));
@@ -555,10 +580,15 @@ export class KeyboardController {
                             this._busChangeUntil = GLib.get_monotonic_time() +
                                 300_000;
                     });
-                this._ownerId = proxy.connect('notify::g-name-owner',
-                    () => this._onProxyOwnerChanged());
-                this._onProxyOwnerChanged();
-            }, this._cancellable);
+            }
+            this._ownerId = proxy.connect('notify::g-name-owner',
+                () => this._onProxyOwnerChanged());
+            this._onProxyOwnerChanged();
+        };
+        if (this._backend === 'upower')
+            new UPowerKeyboardProxy(Gio.DBus.system, UPOWER_NAME, UPOWER_PATH, ready, this._cancellable);
+        else
+            new KeyboardProxy(Gio.DBus.session, BUS_NAME, OBJECT_PATH, ready, this._cancellable);
     }
 
     _disconnectProxy() {
@@ -580,8 +610,25 @@ export class KeyboardController {
         if (!this._enabled || !this._proxy)
             return;
         this._notificationSerial++;
-        const level = fromHardware(this._proxy.Brightness);
-        const available = !!this._proxy.get_name_owner() && isLevel(level);
+        const owner = this._proxy.get_name_owner();
+        let level;
+        if (this._backend === 'upower') {
+            this._hardwareMax = 0;
+            if (owner) {
+                try {
+                    [this._hardwareMax] = this._proxy.GetMaxBrightnessSync();
+                    level = scaledLevel(this._proxy.GetBrightnessSync()[0], this._hardwareMax);
+                } catch (error) {
+                    console.warn(`Lux Capacitor: UPower keyboard backlight unavailable: ${error}`);
+                }
+            }
+            // UPower can provide a working backlight even without Framework sysfs.
+            this._lastActual = level ?? null;
+            this._smoothLevel = this._lastActual;
+        } else {
+            level = fromHardware(this._proxy.Brightness);
+        }
+        const available = !!owner && isLevel(level);
         this._available = available;
         if (available) {
             const actual = this._lastActual;
@@ -626,10 +673,15 @@ export class KeyboardController {
         const [hardwareLevel, source] = parameters.deep_unpack();
         if (!isLevel(hardwareLevel))
             return;
-        const rawLevel = fromHardware(hardwareLevel);
+        this._onBrightnessChanged(fromHardware(hardwareLevel), source);
+    }
+
+    _onBrightnessChanged(rawLevel, source, raw = null) {
         this._notificationSerial++;
 
-        const ownWrite = source === 'set property' && this._consumeOwnWrite(rawLevel);
+        const external = this._backend === 'upower' && source === 'external';
+        const slider = external || source === 'set property';
+        const ownWrite = slider && this._consumeOwnWrite(rawLevel, raw);
         if (this._lidClosed) {
             this._observeClosedLidLevel(rawLevel);
             return;
@@ -642,15 +694,13 @@ export class KeyboardController {
             return;
         }
         // The EC and power daemon can restore a level after wake without a key press.
-        if (GLib.get_monotonic_time() < this._resumeGuardUntil) {
+        if (!external && GLib.get_monotonic_time() < this._resumeGuardUntil) {
             this._observeRestoredLevel(rawLevel);
             return;
         }
 
         const before = this._lastActual ?? this._currentLevel ?? rawLevel;
-        if (source === 'set property') {
-            // The native Keyboard slider and on/off button both use the
-            // Brightness property. Let either one take manual control.
+        if (slider) {
             this._acceptManual(rawLevel);
             if (this._writeInFlight !== null)
                 this._desiredWrite = rawLevel;
@@ -674,9 +724,9 @@ export class KeyboardController {
             if (source === 'StepDown')
                 next = previousLevel(before);
             else if (source === 'StepUp')
-                next = before >= 100 ? 100 : nextLevel(before);
+                next = before >= 100 ? 100 : nextLevel(before, this._hardwareMax);
             else
-                next = nextLevel(before);
+                next = nextLevel(before, this._hardwareMax);
             this.setManualLevel(next, source === 'internal', `keyboard signal ${source}: ${rawLevel}`,
                 rawLevel);
             return;
@@ -690,7 +740,8 @@ export class KeyboardController {
 
     _acceptManual(level) {
         this._pendingManualOSD = null;
-        this.setAutoEnabled(false, `GNOME brightness property: ${level}`);
+        this.setAutoEnabled(false, this._backend === 'upower'
+            ? `UPower brightness: ${level}` : `GNOME brightness property: ${level}`);
         if (level > 0)
             this._lastLitLevel = level;
         this._settleUntil = GLib.get_monotonic_time() + HOTKEY_SETTLE_US;
@@ -703,6 +754,12 @@ export class KeyboardController {
     }
 
     _onPowerSignal(level, source) {
+        if (this._backend === 'upower') {
+            const percent = scaledLevel(level, this._hardwareMax);
+            if (this._enabled && this._available && percent !== null)
+                this._onBrightnessChanged(percent, source, level);
+            return;
+        }
         if (!this._enabled || source !== 'external' || !isLevel(level))
             return;
         level = fromHardware(level);
@@ -745,9 +802,11 @@ export class KeyboardController {
                 if (!ok)
                     return;
                 const raw = new TextDecoder().decode(bytes).trim();
-                if (!/^(?:100|[1-9]?\d)$/.test(raw))
+                if (!/^(?:0|[1-9]\d*)$/.test(raw))
                     return;
-                level = fromHardware(Number(raw));
+                level = scaledLevel(Number(raw), this._hardwareMax);
+                if (level === null)
+                    return;
             } catch (error) {
                 if (this._cancellable?.is_cancelled())
                     return;
@@ -846,7 +905,7 @@ export class KeyboardController {
                 at: GLib.get_monotonic_time(),
                 level,
             };
-            const next = nextLevel(this._currentLevel ?? previous);
+            const next = nextLevel(this._currentLevel ?? previous, this._hardwareMax);
             this.setManualLevel(next, true, `hardware change: ${previous} -> ${level}`, level);
         } else {
             this._currentLevel = level;
@@ -891,8 +950,10 @@ export class KeyboardController {
         const requested = this._lastRequested;
         if (requested === null || previous === null)
             return true;
-        return level >= Math.min(previous, requested) &&
-            level <= Math.max(previous, requested);
+        // A coarse UPower backlight can round beyond the requested percentage.
+        const end = this._backend === 'upower'
+            ? scaledLevel(rawBrightness(requested, this._hardwareMax), this._hardwareMax) : requested;
+        return level >= Math.min(previous, end) && level <= Math.max(previous, end);
     }
 
     _hasOwnWrite(level) {
@@ -901,9 +962,10 @@ export class KeyboardController {
         return this._ownWrites.some(write => write.level === level);
     }
 
-    _consumeOwnWrite(level) {
+    _consumeOwnWrite(level, raw = null) {
         this._hasOwnWrite(level);
-        const index = this._ownWrites.findIndex(write => write.level === level);
+        const index = this._ownWrites.findIndex(write =>
+            write.level === level && (raw === null || write.raw === raw));
         if (index < 0)
             return false;
         this._ownWrites.splice(index, 1);
@@ -927,34 +989,40 @@ export class KeyboardController {
         this._keepPollingFast();
         const serial = ++this._writeSerial;
         this._lastRequested = level;
+        const raw = rawBrightness(level, this._hardwareMax);
+        const echo = this._backend === 'upower' ? scaledLevel(raw, this._hardwareMax) : level;
         this._ownWrites.push({
-            level,
+            level: echo, raw,
             expires: GLib.get_monotonic_time() + WRITE_ECHO_US,
         });
         if (this._ownWrites.length > 40)
             this._ownWrites.shift();
 
         const generation = this._generation;
-        Gio.DBus.session.call(BUS_NAME, OBJECT_PATH,
-            'org.freedesktop.DBus.Properties', 'Set',
-            new GLib.Variant('(ssv)', [INTERFACE, 'Brightness',
-                new GLib.Variant('i', toHardware(level))]),
-            null, Gio.DBusCallFlags.NONE, -1, this._cancellable,
-            (connection, result) => {
-                if (!this._enabled || generation !== this._generation ||
-                    serial !== this._writeSerial)
-                    return;
-                try {
-                    connection.call_finish(result);
-                } catch (error) {
-                    if (!this._cancellable?.is_cancelled())
-                        console.error(`Lux Capacitor: keyboard write failed: ${error}`);
-                    this._ownWrites = this._ownWrites.filter(write =>
-                        write.level !== level);
-                }
-                this._writeInFlight = null;
-                this._flushWrite();
-            });
+        const done = (connection, result) => {
+            if (!this._enabled || generation !== this._generation ||
+                serial !== this._writeSerial)
+                return;
+            try {
+                connection.call_finish(result);
+            } catch (error) {
+                if (!this._cancellable?.is_cancelled())
+                    console.error(`Lux Capacitor: keyboard write failed: ${error}`);
+                this._ownWrites = this._ownWrites.filter(write =>
+                    write.level !== echo);
+            }
+            this._writeInFlight = null;
+            this._flushWrite();
+        };
+        if (this._backend === 'upower') {
+            this._proxy.call('SetBrightness', new GLib.Variant('(i)', [raw]),
+                Gio.DBusCallFlags.NONE, -1, this._cancellable, done);
+        } else {
+            Gio.DBus.session.call(BUS_NAME, OBJECT_PATH,
+                'org.freedesktop.DBus.Properties', 'Set',
+                new GLib.Variant('(ssv)', [INTERFACE, 'Brightness', new GLib.Variant('i', raw)]),
+                null, Gio.DBusCallFlags.NONE, -1, this._cancellable, done);
+        }
     }
 
     _startRamp() {

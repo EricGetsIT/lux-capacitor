@@ -142,9 +142,19 @@ function curveGraph(settings) {
     return new Adw.PreferencesRow({child: area, activatable: false});
 }
 
-export function buildPreferences(window, settings) {
+export function buildPreferences(window, settings, {kde = false} = {}) {
     window._settings = settings;
     const page = new Adw.PreferencesPage();
+
+    if (kde) {
+        const auto = new Adw.PreferencesGroup({title: 'Auto Brightness'});
+        for (const [title, key] of [['Screen', 'enabled'], ['Keyboard', 'keyboard-auto-enabled']]) {
+            const row = new Adw.SwitchRow({title});
+            settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+            auto.add(row);
+        }
+        page.add(auto);
+    }
 
     const screen = new Adw.PreferencesGroup({title: 'Screen'});
     screen.add(comboRow(settings, 'transition-speed', 'Transition speed',
@@ -187,27 +197,31 @@ export function buildPreferences(window, settings) {
     const keyboard = new Adw.PreferencesGroup({title: 'Keyboard',
         description: 'Fn+Space and the keyboard slider always switch to a manual level ' +
             'and turn keyboard Auto off.'});
-    keyboard.add(comboRow(settings, 'keyboard-idle-timeout', 'Turn off when idle',
-        'Only Auto\'s light; comes back on input',
-        IDLE_TIMEOUTS));
+    if (!kde) {
+        keyboard.add(comboRow(settings, 'keyboard-idle-timeout', 'Turn off when idle',
+            'Only Auto\'s light; comes back on input',
+            IDLE_TIMEOUTS));
+    }
     keyboard.add(spinRow(settings, 'keyboard-dark-lux', 'Dark threshold',
         'Auto lights the keyboard below this many lux, and turns it off above 2.5× this',
         1, 200));
     const resetKeyboard = new Adw.ButtonRow({title: 'Reset Keyboard Settings'});
     resetKeyboard.connect('activated', () => {
-        for (const key of KEYBOARD_KEYS)
+        for (const key of kde ? ['keyboard-dark-lux'] : KEYBOARD_KEYS)
             settings.reset(key);
         window.add_toast(new Adw.Toast({title: 'Keyboard settings reset'}));
     });
     keyboard.add(resetKeyboard);
     page.add(keyboard);
 
-    const popups = new Adw.PreferencesGroup({title: 'Popups'});
-    const numbers = new Adw.SwitchRow({title: 'Show percentages',
-        subtitle: 'Numbers on the brightness, volume and keyboard popups'});
-    settings.bind('show-osd-numbers', numbers, 'active', Gio.SettingsBindFlags.DEFAULT);
-    popups.add(numbers);
-    page.add(popups);
+    if (!kde) {
+        const popups = new Adw.PreferencesGroup({title: 'Popups'});
+        const numbers = new Adw.SwitchRow({title: 'Show percentages',
+            subtitle: 'Numbers on the brightness, volume and keyboard popups'});
+        settings.bind('show-osd-numbers', numbers, 'active', Gio.SettingsBindFlags.DEFAULT);
+        popups.add(numbers);
+        page.add(popups);
+    }
 
     window.add(page);
     window.connect('close-request', () => {

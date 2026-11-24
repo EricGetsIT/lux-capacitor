@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Lux Capacitor
+Exec=/usr/bin/env gjs -m "@SETTINGS_SCRIPT@"
+Icon=display-brightness-symbolic
+Categories=Settings;HardwareSettings;
+OnlyShowIn=KDE;

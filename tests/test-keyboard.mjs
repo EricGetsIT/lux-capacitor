@@ -954,7 +954,7 @@ test('The keyboard tile click goes through the controller and is restored on dis
 });
 
 for (const name of ['extension.js', 'screenController.js', 'keyboardController.js', 'brightnessModel.js',
-    'prefs.js', 'preferencesPage.js']) {
+    'prefs.js', 'preferencesPage.js', 'kdeDaemon.js', 'kdeSettings.js', 'kdeScreenBackend.js', 'kdeSchema.js']) {
     const [ok, bytes] = Gio.File.new_for_path(`lux-capacitor@extensions/${name}`).load_contents(null);
     assert(ok, `unable to read ${name}`);
     Reflect.parse(new TextDecoder().decode(bytes), {target: 'module'});

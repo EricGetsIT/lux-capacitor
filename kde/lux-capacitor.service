@@ -1,0 +1,13 @@
+[Unit]
+Description=Lux Capacitor automatic screen and keyboard brightness
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecCondition=/bin/sh -c 'case ":$${XDG_CURRENT_DESKTOP}:" in *:KDE:*) exit 0 ;; *) exit 1 ;; esac'
+ExecStart=/usr/bin/env gjs -m %h/.local/share/lux-capacitor/kdeDaemon.js
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=graphical-session.target

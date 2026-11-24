@@ -53,7 +53,8 @@ __LUX_CAPACITOR_PAYLOAD__
 
 def build():
     OUTPUT.parent.mkdir(exist_ok=True)
-    files = [SOURCE / name for name in ['install.sh', 'setup.sh', 'install-resume-hook.sh',
+    files = [SOURCE / name for name in ['install.sh', 'setup.sh', 'setup-kde.sh', 'install-resume-hook.sh',
+        'kde/lux-capacitor.service', 'kde/lux-capacitor-settings.desktop',
         '90-restart-iio-sensor-proxy', '50-lux-capacitor-restart.conf', 'README.md', 'LICENSE']]
     # setup.sh compiles the schema in a checkout; every install compiles its own.
     extension = sorted(p for p in (SOURCE / UUID).rglob('*')

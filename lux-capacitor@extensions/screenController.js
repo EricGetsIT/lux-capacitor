@@ -471,7 +471,9 @@ export class ScreenController {
         // The backend can skip small writes. Continue from the fade's own
         // position so it won't repeat the same skipped step forever. Start
         // again from the displayed level if something else has moved it.
-        const current = this._level !== null && Math.abs(this._level - shown) < BRIGHTNESS_EPSILON
+        // Hardware with discrete levels can also round a fade step back to shown.
+        const tolerance = Math.max(BRIGHTNESS_EPSILON, this._backend.stepSize ?? 0);
+        const current = this._level !== null && Math.abs(this._level - shown) < tolerance
             ? this._level : shown;
         let next = advanceBrightness(current, this._target, dt, this._speed);
         const done = Math.abs(next - this._target) <= BRIGHTNESS_EPSILON;
