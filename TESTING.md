@@ -42,6 +42,10 @@ On 2026-11-23 I tested both docked keyboard cases on my Framework Laptop 13 (AMD
 
 On 2026-11-24, on the same laptop (Ubuntu 26.04.1, GNOME Shell 50.1), turning off **Show percentages** removed the numbers from the brightness, volume and keyboard popups, and their bars still followed the sliders.
 
+Version 0.3.0 adds KDE Plasma 6.2+ as a background service that shares the GNOME extension's screen and keyboard logic. On 2026-11-24 I tested it on the same laptop with Ubuntu 26.04.1 and KDE Plasma 6.6.7 (Wayland), installed next to GNOME. The service started only in the Plasma session. Screen Auto followed the light when I covered and uncovered the sensor, and it learned from Plasma's brightness slider and keys. Keyboard Auto lit the keyboard in the dark, and Fn+Space stepped through the presets and turned keyboard Auto off. Battery dimming worked when I unplugged, the service kept working across lock and unlock, and the settings app's options and Auto switches worked. On battery at 209 lux, the screen was at 0.561, which matches the curve with my one learned adjustment and the 85% battery reduction. Not checked yet on Plasma: suspend and resume, and the lid closed while docked. The keyboard idle timeout isn't available on Plasma, because Plasma on Wayland doesn't report idle time to apps. In that test the service used about 3% of one CPU core, mostly from reading the keyboard level every 50 ms; it now reads every 250 ms after 10 seconds without a keyboard light change, which measured about a fifth of the cost in isolation.
+
+On the same day I rechecked GNOME Shell 50.1 with the 0.3.0 code, which moved the shared screen logic out of the extension. Screen Auto matched the expected brightness (0.396 against 0.395 at 205 lux on battery), learned from the slider and brightness keys, and Fn+Space, lock and unlock and the settings window worked. The KDE service correctly stayed off in the GNOME session.
+
 My other Ubuntu 0.2.x hardware checks covered battery dimming, settings migration, and the lock screen with 0.2.6.
 
 I used the same Framework Laptop 13 (AMD Ryzen AI 300 Series) for Fedora Workstation 45 (GNOME Shell 51.0), Fedora Workstation 44 (GNOME Shell 50.6), and Ubuntu 26.04.1 (GNOME Shell 50.1). I haven't tested other Framework models. On Fedora Workstation 44 I confirmed the following on 2026-10-11:
@@ -60,7 +64,7 @@ The software checks exercise a sensor service disappearing and returning, includ
 
 `bash tests/run.sh` compiles the schema in a temporary directory, validates JavaScript syntax, checks the brightness policy (including that learned preferences never dim the screen in brighter light and stay exact at their own light level), and runs keyboard and screen regressions against mocks. Screen regressions cover the sensor-noise dead zone, saving a slider drag once, resetting preferences when Auto is turned off, saving on lock, and cleaning up stored contradictions. These cover preset remapping, duplicate firmware signals, manual takeover, sensor response, idle dimming, stale hardware reads, and numeric UI feedback, and volume slider OSD feedback with backend synchronization and disable/re-enable cleanup. OSD regressions also cover rapid level reversals, multiple monitors, amplified volume, and preservation of unrelated OSD animations.
 
-The GitHub workflow runs the software checks in Ubuntu 26.04, Fedora 44, and Fedora 45 containers. Container checks cannot verify real light sensors, physical hotkeys, or suspend/resume. All three container jobs passed in [this GitHub Actions run](https://github.com/EricGetsIT/lux-capacitor/actions/runs/40059011732).
+The GitHub workflow runs the software checks in Ubuntu 26.04, Fedora 44, Fedora 45, Debian 13, Arch and openSUSE Tumbleweed containers, and installs every package the installer can request with each distribution's real package manager, so a renamed package fails the check. Container checks cannot verify real light sensors, physical hotkeys, or suspend/resume. All three container jobs passed in [this GitHub Actions run](https://github.com/EricGetsIT/lux-capacitor/actions/runs/40059011732).
 
 `tests/test-install.py` also checks GNOME-version rejection, fresh installation defaults, and upgrade preservation of settings and backups in an isolated environment. It uses real schemas and settings storage, with package installation, system changes, and live Shell activation mocked. These installer checks passed in all three containers. I also ran them against the downloaded v0.1.0 installer and verified its published checksums on Ubuntu.
 
@@ -70,9 +74,9 @@ The Quick Settings screenshots in the README show both Auto switches enabled on 
 
 This is the checklist I use for a clean-install hardware test on each supported distribution:
 
-1. Record `cat /etc/os-release`, `gnome-shell --version`, and the laptop model.
+1. Record `cat /etc/os-release`, `gnome-shell --version` or `plasmashell --version`, and the laptop model.
 2. Verify the installer with `bash Install-Lux-Capacitor.run --check`.
-3. Install as the desktop user, log out and back in, and confirm the extension is enabled.
+3. Install as the desktop user, log out and back in, and confirm the extension is enabled (GNOME) or `systemctl --user status lux-capacitor` is active (Plasma).
 4. Cover/uncover the sensor in several lighting conditions. Check smooth screen updates and numeric feedback.
 5. Adjust the screen slider in dim light, then move to brighter light and confirm the screen never gets dimmer. Confirm stored preferences survive login, and that toggling screen Auto off resets them.
 6. Toggle keyboard Auto. Test hotkeys, including quick presses, and the manual 0/20/50/75/100 presets.
@@ -82,4 +86,4 @@ This is the checklist I use for a clean-install hardware test on each supported 
 10. Open the settings window. Change each option and confirm the screen and keyboard respond; reset learned brightness and the keyboard settings. With an idle timeout set, stop typing in the dark and confirm the keyboard light fades out and returns on input, and that Fn+Space still advances exactly one preset.
 11. Inspect `journalctl --user -b` for extension errors and `systemctl status iio-sensor-proxy` for sensor errors.
 12. With an external monitor attached and the laptop awake, close the lid and adjust the keyboard slider and tile. Confirm the keyboard stays off while closed and restores the last selected level on opening. For a second close/open cycle, leave keyboard Auto on and confirm it responds to the first fresh light reading.
-
+13. On Plasma, open Lux Capacitor from the application menu, switch screen and keyboard Auto off and on, and confirm the service follows. Log into GNOME on the same laptop if it has both, and confirm the same settings and learned brightness are used there.

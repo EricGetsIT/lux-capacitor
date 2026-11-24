@@ -16,10 +16,11 @@ HEADER = '''#!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
     --help|-h)
-        echo 'Lux Capacitor: Ubuntu / Fedora with GNOME Shell 50 or 51.'
+        echo 'Lux Capacitor for Ubuntu, Debian, Fedora, Arch and openSUSE.'
+        echo 'Supports GNOME Shell 50 or 51 and KDE Plasma 6.2 or newer.'
         echo 'Run: bash ./Install-Lux-Capacitor.run (normal desktop user, no sudo).'
         echo 'Verify only: bash ./Install-Lux-Capacitor.run --check'
-        echo 'Includes screen/keyboard Auto, manual presets, percentage displays, and the resume hook.'
+        echo 'Includes automatic screen and keyboard brightness and the resume hook.'
         exit 0 ;;
     ''|--check) ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -53,7 +54,8 @@ __LUX_CAPACITOR_PAYLOAD__
 
 def build():
     OUTPUT.parent.mkdir(exist_ok=True)
-    files = [SOURCE / name for name in ['install.sh', 'setup.sh', 'install-resume-hook.sh',
+    files = [SOURCE / name for name in ['install.sh', 'packages.sh', 'setup.sh', 'setup-kde.sh', 'install-resume-hook.sh',
+        'kde/lux-capacitor.service', 'kde/lux-capacitor-settings.desktop',
         '90-restart-iio-sensor-proxy', '50-lux-capacitor-restart.conf', 'README.md', 'LICENSE']]
     # setup.sh compiles the schema in a checkout; every install compiles its own.
     extension = sorted(p for p in (SOURCE / UUID).rglob('*')

@@ -4,7 +4,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"; rm -f tests/extension-fixture.mjs' EXIT
-for script in install.sh setup.sh install-resume-hook.sh; do bash -n "$script"; done
+for script in install.sh packages.sh setup.sh setup-kde.sh install-resume-hook.sh; do bash -n "$script"; done
 sh -n 90-restart-iio-sensor-proxy
 python3 tests/test-resume.py
 cp lux-capacitor@extensions/schemas/*.xml "$temporary/"
@@ -22,7 +22,7 @@ for original, replacement in {
     "import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';": 'class Extension {}',
     "import * as Main from 'resource:///org/gnome/shell/ui/main.js';": 'export const Main = {};',
     "import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';": 'const PopupMenu = {};',
-    "'./brightnessModel.js'": "'../lux-capacitor@extensions/brightnessModel.js'",
+    "'./screenController.js'": "'../lux-capacitor@extensions/screenController.js'",
     "'./keyboardController.js'": "'../lux-capacitor@extensions/keyboardController.js'",
 }.items():
     assert original in source, original
@@ -34,3 +34,4 @@ export G_DEBUG="${G_DEBUG:+$G_DEBUG,}fatal-criticals"
 gjs -m tests/test-model.mjs
 gjs -m tests/test-keyboard.mjs
 
+GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$temporary" gjs -m tests/test-kde.mjs

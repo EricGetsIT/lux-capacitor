@@ -3,6 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import {KeyboardController, automaticKeyboardTarget, fromHardware, toHardware} from '../lux-capacitor@extensions/keyboardController.js';
+import {ScreenController} from '../lux-capacitor@extensions/screenController.js';
 import Extension, {Main} from './extension-fixture.mjs';
 
 const KeyboardControl = GObject.registerClass({Properties: {
@@ -394,86 +395,146 @@ test('Turning off percentages leaves the popups without numbers but keeps their 
     e._restoreSpeakerOSD();
 });
 
-function screenFixture(anchors = '[]') {
-    const values = {anchors, 'anchor-unit': anchors === '[]' ? '' : 'lux',
-        'native-override-active': false};
+function screenFixture(anchors = '[]', backend = {
+    value: 0.5,
+    setSilently(value) { this.value = value; },
+}) {
+    const values = {anchors, 'anchor-unit': anchors === '[]' ? '' : 'lux', enabled: true,
+        'transition-speed': 'normal', 'light-sensitivity': 'normal',
+        'screen-min-brightness': 0, 'screen-max-brightness': 100, 'dim-on-battery': false};
     let writes = 0;
+    const handlers = new Map();
     const settings = {
         get_string(key) { return values[key]; },
-        set_string(key, value) { values[key] = value; writes++; },
+        set_string(key, value) {
+            values[key] = value;
+            writes++;
+            handlers.get(`changed::${key}`)?.();
+        },
         get_boolean(key) { return values[key]; },
+        set_boolean(key, value) { values[key] = value; handlers.get(`changed::${key}`)?.(); },
+        get_int(key) { return values[key]; },
+        connect(signal, callback) { handlers.set(signal, callback); return signal; },
+        disconnect(signal) { handlers.delete(signal); },
     };
-    const e = new Extension();
-    e._settings = settings;
-    Object.assign(e, {_anchors: e._loadAnchors(), _anchorUnit: values['anchor-unit'],
-        _saveAnchorsId: 0, _autoEnabled: true, _lux: null, _targetLux: null, _unit: null,
-        _sensorClaimed: true, _manager: {globalScale: {value: 0.5}}, _originalKeySteps: new Map()});
-    e._sensorDesired = () => true;
-    e._stopTimer = () => {};
-    e._syncToggle = () => {};
+    const screen = new ScreenController({settings, backend});
+    screen._connectSensor = () => {
+        screen._sensor = {LightLevelUnit: 'lux', ReleaseLightRemote() {}, disconnect() {}};
+        screen._sensorClaimed = true;
+    };
+    screen._connectUPower = () => {};
+    screen.start();
+
     const targets = [];
-    e._setTarget = target => targets.push(target);
+    const setTarget = screen._setTarget.bind(screen);
+    screen._setTarget = target => {
+        targets.push(target);
+        setTarget(target);
+    };
     const sense = lux => {
-        e._sensor = {LightLevel: lux, LightLevelUnit: 'lux',
-            ReleaseLightRemote() {}, disconnectObject() {}};
-        e._readLux();
+        screen._sensor.LightLevel = lux;
+        screen._onSensorPropertiesChanged();
     };
     const drag = value => {
-        e._manager.globalScale.value = value;
-        e._onUserUpdate();
+        backend.value = value;
+        screen.onUserChange();
     };
-    return {e, values, targets, sense, drag, writes: () => writes};
+    return {screen, settings, values, targets, sense, drag, writes: () => writes};
 }
 
-function waitForAnchorSave(e) {
-    while (e._saveAnchorsId)
+function gnomeScreenFixture() {
+    const e = new Extension();
+    e._manager = {globalScale: {value: 0.5}, scales: [], autoBrightnessTarget: -1,
+        _inhibitUpdates: false, _sync() {}};
+    e._originalKeySteps = new Map();
+    const {screen, settings, values, targets, sense} = screenFixture('[]', e._createScreenBackend());
+    e._settings = settings;
+    e._screen = screen;
+    return {e, screen, values, targets, sense};
+}
+
+function waitForAnchorSave(screen) {
+    while (screen._saveAnchorsId)
         GLib.MainContext.default().iteration(true);
 }
 
 test('Screen ignores small light fluctuations but follows real changes', () => {
-    const {targets, sense} = screenFixture();
+    const {screen, targets, sense} = screenFixture();
     for (const lux of [40, 42, 44, 46])
         sense(lux);
     assert(targets.length === 1, 'sensor noise re-targeted the screen');
     sense(60);
     assert(targets.length === 2, 'a real light change was ignored');
+    screen.stop();
+});
+
+test('A plain screen backend receives fade steps and learns a user change', () => {
+    const applied = [];
+    const loop = GLib.MainLoop.new(null, false);
+    const backend = {
+        value: 0.1,
+        setSilently(value) {
+            this.value = value;
+            applied.push(value);
+            if (applied.length === 2)
+                loop.quit();
+        },
+    };
+    const {screen, values, sense} = screenFixture('[]', backend);
+    sense(500);
+    // Bound the wait if the light change fails to start a fade.
+    const timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
+        loop.quit();
+        return GLib.SOURCE_CONTINUE;
+    });
+    loop.run();
+    GLib.source_remove(timeout);
+    assert(applied.length === 2 && applied[0] > 0.1 && applied[1] > applied[0] &&
+        applied[1] < screen._target, 'the backend did not receive successive fade steps');
+    backend.value = 0.67;
+    screen.onUserChange();
+    screen.stop();
+    const anchors = JSON.parse(values.anchors);
+    assert(anchors.length === 1 && anchors[0].lux === 500 && anchors[0].brightness === 0.67 &&
+        values['anchor-unit'] === 'lux', 'the manual backend value was not learned');
 });
 
 test('A screen slider drag saves one settled preference after the drag', () => {
-    const {e, values, sense, drag, writes} = screenFixture();
+    const {screen, values, sense, drag, writes} = screenFixture();
     sense(60);
     for (const value of [0.6, 0.62, 0.64])
         drag(value);
-    assert(writes() === 0 && e._saveAnchorsId, 'drag wrote settings on every step');
-    waitForAnchorSave(e);
+    assert(writes() === 0 && screen._saveAnchorsId, 'drag wrote settings on every step');
+    waitForAnchorSave(screen);
     const saved = JSON.parse(values.anchors);
     assert(saved.length === 1 && saved[0].lux === 60 && saved[0].brightness === 0.64 &&
         values['anchor-unit'] === 'lux', 'settled preference was not saved');
+    screen.stop();
 });
 
 test('Turning screen Auto off resets preferences and cancels a pending save', () => {
-    const {e, values, sense, drag} = screenFixture();
+    const {screen, settings, values, sense, drag} = screenFixture();
     sense(60);
     drag(0.7);
-    values.enabled = false;
-    e._updateSensorClaim = () => {};
-    e._onEnabledChanged();
-    assert(!e._saveAnchorsId && values.anchors === '[]' && e._anchors.length === 0,
+    settings.set_boolean('enabled', false);
+    assert(!screen._saveAnchorsId && values.anchors === '[]' && screen._anchors.length === 0,
         'pending save survived the reset');
+    screen.stop();
 });
 
 test('Disabling (on logout) writes a pending screen preference', () => {
-    const {e, values, sense, drag} = screenFixture();
+    const {e, values, sense} = gnomeScreenFixture();
     Main.sessionMode = {isLocked: true};
     Main.osdWindowManager = {};
     sense(60);
-    drag(0.7);
+    e._manager.globalScale.value = 0.7;
+    e._screen.onUserChange();
     e.disable();
     assert(JSON.parse(values.anchors)[0]?.brightness === 0.7, 'pending preference was lost on lock');
 });
 
 test('Locking hides the Auto switches but keeps brightness control running', () => {
-    const {e, targets, sense} = screenFixture();
+    const {e, targets, sense} = gnomeScreenFixture();
     let destroyed = 0;
     const keyboardTile = {};
     Object.assign(e, {
@@ -485,7 +546,6 @@ test('Locking hides the Auto switches but keeps brightness control running', () 
         _keyboardAutoMenuItem: {destroy() { destroyed++; }},
         _keyboardQuickItem: keyboardTile, _menuSetupId: 0,
     });
-    e._manager.scales = [];
     Main.sessionMode = {isLocked: true};
     e._onSessionModeChanged();
     assert(destroyed === 2 && !e._screenAutoMenuItem && !e._keyboardAutoMenuItem,
@@ -501,6 +561,7 @@ test('Locking hides the Auto switches but keeps brightness control running', () 
     e._scheduleQuickSettingsMenus = () => scheduled++;
     e._onSessionModeChanged();
     assert(scheduled === 1, 'the switches were not restored after unlocking');
+    e._screen.stop();
 });
 
 test('A closed lid turns keyboard Auto light off and ignores the darkness under it', () => {
@@ -573,56 +634,59 @@ test('A late off reading after reopening keeps the selected manual level', () =>
 });
 
 test('Closing the lid releases the light sensor and opening it resumes screen Auto', () => {
-    const {e, targets, sense} = screenFixture();
-    delete e._sensorDesired;
+    const {screen, targets, sense} = screenFixture();
     let released = 0;
     let claimed = 0;
-    e._releaseSensor = () => {
+    screen._releaseSensor = () => {
         released++;
-        e._sensorClaimed = false;
+        screen._sensorClaimed = false;
     };
-    e._claimSensor = () => {
+    screen._claimSensor = () => {
         claimed++;
-        e._sensorClaimed = true;
-        e._readLux();
+        screen._sensorClaimed = true;
+        screen._readLux();
     };
     sense(300);
-    const upower = {LidIsPresent: true, LidIsClosed: true, OnBattery: false};
-    e._upower = upower;
-    e._onPowerChanged();
-    assert(released === 1 && e._lux === null, 'the sensor stayed claimed under a closed lid');
+    const upower = {LidIsPresent: true, LidIsClosed: true, OnBattery: false, disconnect() {}};
+    screen._upower = upower;
+    screen._onPowerChanged();
+    assert(released === 1 && screen._lux === null, 'the sensor stayed claimed under a closed lid');
     sense(0);
     assert(targets.length === 1, 'darkness under the closed lid moved the screen');
-    e._sensor.LightLevel = 300;
+    screen._sensor.LightLevel = 300;
     upower.LidIsClosed = false;
-    e._onPowerChanged();
-    assert(claimed === 1 && e._lux === 300 && targets.length === 2, 'screen Auto did not resume after opening the lid');
+    screen._onPowerChanged();
+    assert(claimed === 1 && screen._lux === 300 && targets.length === 2, 'screen Auto did not resume after opening the lid');
+    screen.stop();
 });
 
 test('Sensor service restart discards stale claims and resumes Auto on a fresh reading', () => {
-    const {e, targets} = screenFixture();
+    const {screen, targets} = screenFixture();
     let owner = ':1.20';
     const claims = [];
-    Object.assign(e, {_sensorClaimed: false, _sensorGeneration: 0, _sensor: {
+    Object.assign(screen, {_sensorClaimed: false, _sensorGeneration: 0, _sensor: {
         HasAmbientLight: true, LightLevel: 20, LightLevelUnit: 'lux',
         get_name_owner: () => owner, ClaimLightRemote: callback => claims.push(callback),
+        ReleaseLightRemote() {}, disconnect() {},
     }});
-    e._claimSensor();
+    screen._claimSensor();
     owner = null;
-    e._onSensorOwnerChanged();
+    screen._onSensorOwnerChanged();
     owner = ':1.21';
-    e._sensor.LightLevel = 80;
-    e._onSensorOwnerChanged();
+    screen._sensor.LightLevel = 80;
+    screen._onSensorOwnerChanged();
     assert(claims.length === 2, 'the replacement sensor service was not claimed');
     claims[0](null, null);
-    assert(!e._sensorClaimed && e._lux === null && targets.length === 0, 'a stale claim moved the screen');
+    assert(!screen._sensorClaimed && screen._lux === null && targets.length === 0, 'a stale claim moved the screen');
     claims[1](null, null);
-    assert(e._sensorClaimed && e._lux === 80 && targets.length === 1, 'Auto did not resume on the new service');
+    assert(screen._sensorClaimed && screen._lux === 80 && targets.length === 1, 'Auto did not resume on the new service');
+    screen.stop();
 });
 
 test('Contradicting preferences stored by earlier versions are cleaned up on load', () => {
-    const {e} = screenFixture('[{"lux":40,"brightness":0.9},{"lux":150,"brightness":0.3}]');
-    assert(e._anchors.length === 1 && e._anchors[0].lux === 150, 'stored contradiction was kept');
+    const {screen} = screenFixture('[{"lux":40,"brightness":0.9},{"lux":150,"brightness":0.3}]');
+    assert(screen._anchors.length === 1 && screen._anchors[0].lux === 150, 'stored contradiction was kept');
+    screen.stop();
 });
 
 function idleMonitor() {
@@ -703,14 +767,15 @@ test('Fn+Space from an Auto level advances exactly one preset in either detectio
 });
 
 test('Battery dimming keeps learned preferences undimmed and exact', () => {
-    const {e, targets, sense, drag} = screenFixture();
-    Object.assign(e, {_dimOnBattery: true, _onBattery: true});
+    const {screen, targets, sense, drag} = screenFixture();
+    Object.assign(screen, {_dimOnBattery: true, _onBattery: true});
     sense(60);
     drag(0.51);
-    assert(Math.abs(e._anchors[0].brightness - 0.6) < 1e-9, 'battery dimming was learned as a preference');
-    e._onBattery = false;
-    e._retargetNow();
+    assert(Math.abs(screen._anchors[0].brightness - 0.6) < 1e-9, 'battery dimming was learned as a preference');
+    screen._onBattery = false;
+    screen._retargetNow();
     assert(Math.abs(targets.at(-1) - 0.6) < 1e-9, 'preference was not restored on AC power');
+    screen.stop();
 });
 
 test('A small or slow screen fade reaches its target instead of stalling', () => {
@@ -718,30 +783,30 @@ test('A small or slow screen fade reaches its target instead of stalling', () =>
     // same slider value, so the 15% battery dimming never reached the screen.
     for (const [speed, from, to] of [['normal', 0.43, 0.43 * 0.85], ['subtle', 0.6, 0.5],
         ['normal', 0.5, 0.51], ['fast', 0.2, 0.9]]) {
-        const {e} = screenFixture();
-        const scale = {value: from};
-        Object.assign(e, {_speed: speed, _target: to, _level: null, _holdUntil: 0, _timerId: 1,
-            _manager: {globalScale: scale, autoBrightnessTarget: -1, _inhibitUpdates: false, _sync() {}}});
+        const {e, screen} = gnomeScreenFixture();
+        const scale = e._manager.globalScale;
+        scale.value = from;
+        Object.assign(screen, {_speed: speed, _target: to, _level: null, _holdUntil: 0, _timerId: 1});
         let ticks = 0;
         let running = true;
         // Simulate 100 ms ticks for up to a minute.
         while (running && ticks < 600) {
-            e._lastTick = GLib.get_monotonic_time() - 100_000;
-            running = e._tick() === GLib.SOURCE_CONTINUE;
+            screen._lastTick = GLib.get_monotonic_time() - 100_000;
+            running = screen._tick() === GLib.SOURCE_CONTINUE;
             ticks++;
         }
-        assert(!running && !e._timerId && Math.abs(scale.value - to) <= 0.003,
+        assert(!running && !screen._timerId && Math.abs(scale.value - to) <= 0.003,
             `${speed} fade ${from} -> ${to} stopped at ${scale.value} after ${ticks} ticks`);
     }
-    const {e} = screenFixture();
-    const scale = {value: 0.8};
-    Object.assign(e, {_speed: 'normal', _target: 0.3, _level: null, _holdUntil: 0, _timerId: 1,
-        _manager: {globalScale: scale, autoBrightnessTarget: -1, _inhibitUpdates: false, _sync() {}}});
-    e._lastTick = GLib.get_monotonic_time() - 100_000;
-    e._tick();
+    const {e, screen} = gnomeScreenFixture();
+    const scale = e._manager.globalScale;
+    scale.value = 0.8;
+    Object.assign(screen, {_speed: 'normal', _target: 0.3, _level: null, _holdUntil: 0, _timerId: 1});
+    screen._lastTick = GLib.get_monotonic_time() - 100_000;
+    screen._tick();
     scale.value = 0.4;
-    e._lastTick = GLib.get_monotonic_time() - 100_000;
-    e._tick();
+    screen._lastTick = GLib.get_monotonic_time() - 100_000;
+    screen._tick();
     assert(scale.value < 0.4 && scale.value > 0.39, 'the fade ignored a slider value changed from outside');
 });
 
@@ -795,16 +860,16 @@ test('The keyboard level is read less often while idle and fast again on any cha
 });
 
 test('Resetting learned brightness from the settings window reaches the extension', () => {
-    const {e, values, targets, sense, drag} = screenFixture();
+    const {screen, settings, values, targets, sense, drag} = screenFixture();
     sense(60);
     drag(0.9);
-    values.anchors = '[]';
-    values['anchor-unit'] = '';
-    e._onAnchorsChanged();
-    assert(e._anchors.length === 0 && !e._saveAnchorsId && targets.length === 2,
+    settings.set_string('anchors', '[]');
+    settings.set_string('anchor-unit', '');
+    assert(screen._anchors.length === 0 && !screen._saveAnchorsId && targets.length === 2,
         'external reset was ignored or overwritten');
-    e._saveAnchors();
-    assert(e._anchors.length === 0 && values.anchors === '[]', 'own save reloaded preferences');
+    screen._saveAnchors();
+    assert(screen._anchors.length === 0 && values.anchors === '[]', 'own save reloaded preferences');
+    screen.stop();
 });
 
 test('100% is written as 99%, so Fn+Space cannot lock the light off from it', () => {
@@ -888,7 +953,8 @@ test('The keyboard tile click goes through the controller and is restored on dis
     assert(toggles === 1 && nativeClicks === 1, 'disable did not restore the native tile click');
 });
 
-for (const name of ['extension.js', 'keyboardController.js', 'brightnessModel.js', 'prefs.js']) {
+for (const name of ['extension.js', 'screenController.js', 'keyboardController.js', 'brightnessModel.js',
+    'prefs.js', 'preferencesPage.js', 'kdeDaemon.js', 'kdeSettings.js', 'kdeScreenBackend.js', 'kdeSchema.js']) {
     const [ok, bytes] = Gio.File.new_for_path(`lux-capacitor@extensions/${name}`).load_contents(null);
     assert(ok, `unable to read ${name}`);
     Reflect.parse(new TextDecoder().decode(bytes), {target: 'module'});

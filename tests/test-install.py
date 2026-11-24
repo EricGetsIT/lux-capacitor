@@ -6,6 +6,7 @@ import io
 import json
 import os
 import pathlib
+import platform
 import subprocess
 import sys
 import tarfile
@@ -32,12 +33,18 @@ with tempfile.TemporaryDirectory() as directory:
     commands.mkdir()
     log = root / 'commands.log'
     stubs = {
-        'gnome-shell': '#!/bin/sh\nprintf "GNOME Shell %s\\n" "${TEST_SHELL_VERSION:-50.0}"\n',
+        'gnome-shell': '#!/bin/sh\n[ -n "$TEST_SHELL_VERSION" ] || exit 127\nprintf "GNOME Shell %s\\n" "$TEST_SHELL_VERSION"\n',
+        'plasmashell': '''#!/bin/sh
+[ -n "$TEST_PLASMA_VERSION" ] || exit 127
+[ "${QT_QPA_PLATFORM:-}" != offscreen ] || exit 1
+printf 'plasmashell %s\\n' "$TEST_PLASMA_VERSION"
+''',
         'gnome-extensions': '#!/bin/sh\nprintf "extensions %s\\n" "$*" >> "$TEST_COMMAND_LOG"\n',
+        'systemctl': '#!/bin/sh\nprintf "systemctl %s\\n" "$*" >> "$TEST_COMMAND_LOG"\n[ "$1" = --user ]\n',
         'sudo': '''#!/bin/sh
 printf 'sudo %s\n' "$*" >> "$TEST_COMMAND_LOG"
 case "$1" in
-    apt-get|dnf) exit 0 ;;
+    apt-get|dnf|pacman|zypper) exit 0 ;;
     bash) case "$2" in */install-resume-hook.sh) exit 0 ;; esac ;;
 esac
 echo 'Unexpected privileged command' >&2
@@ -48,17 +55,29 @@ exit 1
         p = commands / name
         p.write_text(script)
         p.chmod(0o755)
-    env = dict(os.environ, PATH=str(commands) + ':' + os.environ['PATH'],
-               XDG_DATA_HOME=str(root / 'data'), XDG_STATE_HOME=str(root / 'state'),
-               XDG_CONFIG_HOME=str(root / 'config'), GSETTINGS_BACKEND='keyfile',
-               TEST_COMMAND_LOG=str(log))
-    for name in ('DBUS_SESSION_BUS_ADDRESS', 'DCONF_PROFILE', 'GSETTINGS_SCHEMA_DIR'):
-        env.pop(name, None)
 
-    def install(version='50.0'):
+    def session_env(directory):
+        runtime = directory / 'run'
+        runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+        env = dict(os.environ, PATH=str(commands) + ':' + os.environ['PATH'],
+                   HOME=str(directory / 'home'), XDG_DATA_HOME=str(directory / 'data'),
+                   XDG_STATE_HOME=str(directory / 'state'), XDG_CONFIG_HOME=str(directory / 'config'),
+                   XDG_CACHE_HOME=str(directory / 'cache'), XDG_RUNTIME_DIR=str(runtime), XDG_CURRENT_DESKTOP='',
+                   GSETTINGS_BACKEND='keyfile', TEST_COMMAND_LOG=str(log))
+        for name in ('DBUS_SESSION_BUS_ADDRESS', 'DCONF_PROFILE', 'GSETTINGS_SCHEMA_DIR',
+                     'QT_QPA_PLATFORM', 'LUX_OS_RELEASE'):
+            env.pop(name, None)
+        return env
+
+    env = session_env(root)
+
+    def install(version='50.0', plasma='', *, directory=root, release=None):
+        install_env = dict(session_env(directory), TEST_SHELL_VERSION=version, TEST_PLASMA_VERSION=plasma)
+        if release is not None:
+            install_env['LUX_OS_RELEASE'] = str(release)
         return subprocess.run(['dbus-run-session', '--', 'bash', str(source / 'install.sh')],
                               input='y\n', text=True, capture_output=True,
-                              env=dict(env, TEST_SHELL_VERSION=version), timeout=90)
+                              env=install_env, timeout=90)
 
     def settings(code):
         prelude = f'''from gi.repository import Gio
@@ -75,9 +94,21 @@ earlier = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions
 
     for unsupported in ('49.0', '52.0'):
         rejected = install(unsupported)
+        assert f'Found: GNOME Shell {unsupported}' in rejected.stdout, rejected.stdout + rejected.stderr
         assert rejected.returncode != 0 and not log.exists(), f'GNOME {unsupported} modified the system'
         assert not (root / 'data').exists(), f'Rejected GNOME {unsupported} install created an extension'
     print('PASS: GNOME 49 and 52 are rejected before installation')
+    for version, plasma, found in [('', '6.1', 'plasmashell 6.1'), ('', '', 'no Plasma')]:
+        rejected = install(version, plasma)
+        assert rejected.returncode != 0 and found in rejected.stdout, rejected.stdout + rejected.stderr
+        assert 'no GNOME Shell' in rejected.stdout and not log.exists()
+        assert not any((root / name).exists() for name in ('data', 'state', 'config', 'home'))
+    release = root / 'os-release'
+    release.write_text('ID=unsupported\nID_LIKE="notdebian archlinux"\n')
+    rejected = install(release=release)
+    assert rejected.returncode != 0 and 'unsupported' in rejected.stdout, rejected.stdout + rejected.stderr
+    assert not log.exists() and not any((root / name).exists() for name in ('data', 'state', 'config', 'home'))
+    print('PASS: Plasma 6.1, missing desktops and an unsupported distro are rejected before installation')
     fresh = install()
     assert fresh.returncode == 0, fresh.stdout + fresh.stderr
     target = root / 'data/gnome-shell/extensions' / UUID
@@ -86,8 +117,12 @@ earlier = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions
         assert (target / name).read_bytes() == (source / UUID / name).read_bytes()
     state = json.loads(settings("print(json.dumps([brightness.get_boolean('enabled'), brightness.get_boolean('keyboard-auto-enabled'), media.get_int('volume-step'), shell.get_strv('enabled-extensions')]))"))
     assert state[:3] == [True, True, 5] and UUID in state[3], state
-    distro = pathlib.Path('/etc/os-release').read_text()
-    expected = 'dnf install' if '\nID=fedora\n' in '\n' + distro else 'apt-get install'
+    distro = platform.freedesktop_os_release()
+    distro_ids = [distro['ID'], *distro.get('ID_LIKE', '').split()]
+    managers = {'ubuntu': 'apt-get install', 'debian': 'apt-get install', 'fedora': 'dnf install',
+                'arch': 'pacman -S', 'suse': 'zypper --non-interactive install'}
+    expected = next(managers['suse' if name.startswith('opensuse') else name] for name in distro_ids
+                    if name in managers or name.startswith('opensuse'))
     assert expected in log.read_text(), 'Wrong distribution package-manager path'
     print('PASS: fresh release install copies files, compiles schema, enables both Auto settings, and selects the distribution package manager')
 
@@ -155,4 +190,64 @@ earlier = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions
     assert f'extensions enable {UUID}' not in log.read_text(), 'Installer requested live activation while extensions were off'
     assert 'turn on' in paused.stdout.lower() and 'extensions app' in paused.stdout.lower(), 'Missing activation instructions'
     print('PASS: installation preserves the disabled master switch and explains how to activate later')
-    print('NOTE: package installation, privileged resume-hook installation, and live GNOME Shell activation were mocked; no physical hardware was tested.')
+
+    # Read each reference family's lists independently of the os-release supplied to the installer.
+    def package_groups(distro_id):
+        script = 'source "$1"; printf "%s\\n" "${common[*]}" "${gnome[*]}" "${kde[*]}"'
+        return subprocess.check_output(['bash', '-ec', script, 'bash', str(source / 'packages.sh')],
+                                       env=dict(env, ID=distro_id, ID_LIKE=''), text=True).splitlines()
+
+    packages = {
+        'apt': ('apt-get install -y', package_groups('debian')),
+        'dnf': ('dnf install -y', package_groups('fedora')),
+        'pacman': ('pacman -S --needed --noconfirm', package_groups('arch')),
+        'zypper': ('zypper --non-interactive install', package_groups('opensuse-tumbleweed')),
+    }
+    cases = [
+        # ID, ID_LIKE, package manager, GNOME Shell, Plasma, expected desktop(s)
+        ('ubuntu', 'debian', 'apt', '50.0', '', 'gnome'),
+        ('debian', '', 'apt', '', '6.6.7', 'kde'),
+        ('fedora', '', 'dnf', '51.0', '6.2', 'both'),
+        ('arch', '', 'pacman', '50.0', '6.10', 'both'),
+        ('opensuse-tumbleweed', '', 'zypper', '51.0', '6.6', 'both'),
+        ('opensuse-leap', '', 'zypper', '', '6.6', 'kde'),
+        ('linuxmint', 'ubuntu debian', 'apt', '50.0', '6.6', 'both'),
+        ('endeavouros', 'arch', 'pacman', '49.0', '6.6', 'kde'),
+        ('geckolinux', 'opensuse suse', 'zypper', '51.0', '6.1', 'gnome'),
+    ]
+    for distro_id, like, manager, version, plasma, desktops in cases:
+        directory = root / distro_id
+        release.write_text(f'ID={distro_id}\nID_LIKE="{like}"\n')
+        log.write_text('')
+        result = install(version, plasma, directory=directory, release=release)
+        assert result.returncode == 0, result.stdout + result.stderr
+        lines = log.read_text().splitlines()
+        gnome = desktops in ('gnome', 'both')
+        kde = desktops in ('kde', 'both')
+        command, (common, gnome_packages, kde_packages) = packages[manager]
+        requested = [common]
+        if gnome:
+            requested.append(gnome_packages)
+        if kde:
+            requested.append(kde_packages)
+        expected = ['sudo apt-get update'] if manager == 'apt' else []
+        expected.append(f"sudo {command} {' '.join(requested)}")
+        assert [s for s in lines if s.startswith('sudo ') and not s.startswith('sudo bash ')] == expected, lines
+
+        extension = directory / 'data/gnome-shell/extensions' / UUID
+        share = directory / 'home/.local/share'
+        assert (extension / 'schemas/gschemas.compiled').exists() == gnome
+        if not gnome:
+            assert not any(s.startswith('extensions ') for s in lines), lines
+        assert (share / 'lux-capacitor/schemas/gschemas.compiled').exists() == kde
+        assert (share / 'lux-capacitor/kdeDaemon.js').exists() == kde
+        assert (directory / 'home/.config/systemd/user/lux-capacitor.service').exists() == kde
+        launcher = share / 'applications/lux-capacitor-settings.desktop'
+        assert launcher.exists() == kde
+        if kde:
+            assert str(share / 'lux-capacitor/kdeSettings.js') in launcher.read_text()
+            assert 'systemctl --user enable lux-capacitor.service' in lines, lines
+        if gnome and kde:
+            assert result.stdout.index('Installed extension') < result.stdout.index('Installed the KDE')
+        print(f'PASS: {distro_id} requests the expected {manager} packages and installs the selected desktops')
+    print('NOTE: package installation, the privileged sleep hook and live desktop activation were mocked.')
