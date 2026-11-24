@@ -1,4 +1,4 @@
-name: Ubuntu and Fedora checks
+name: Linux desktop checks
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
@@ -7,19 +7,35 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        image: ['ubuntu:26.04', 'fedora:44', 'fedora:45']
+        image: ['ubuntu:26.04', 'fedora:44', 'fedora:45', 'debian:13', 'archlinux:latest', 'opensuse/tumbleweed']
     container: ${{ matrix.image }}
     steps:
       - name: Install test dependencies
         shell: bash
         run: |
-          if command -v dnf >/dev/null; then
-            dnf install -y git gjs python3 python3-gobject glib2 dconf dbus-daemon util-linux gnome-shell gnome-settings-daemon
-          else
+          # Install the test tools and Shell schemas before checkout. Runtime dependencies follow below.
+          if command -v apt-get >/dev/null; then
             apt-get update
-            apt-get install -y git gjs python3 python3-gi libglib2.0-bin dconf-cli dbus-daemon util-linux gnome-shell-common gnome-settings-daemon-common
+            DEBIAN_FRONTEND=noninteractive apt-get install -y git dbus-daemon util-linux gnome-shell-common gnome-settings-daemon-common
+          elif command -v dnf >/dev/null; then
+            dnf install -y git dbus-daemon util-linux gnome-shell diffutils
+          elif command -v pacman >/dev/null; then
+            pacman -Syu --needed --noconfirm git dbus util-linux gnome-shell diffutils
+          elif command -v zypper >/dev/null; then
+            zypper --non-interactive install git dbus-1-daemon util-linux gnome-shell diffutils tar gzip
+          else
+            echo 'No supported package manager in this test image.' >&2
+            exit 1
           fi
       - uses: actions/checkout@v5
+      - name: Install the release packages for both desktops
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          source /etc/os-release
+          source ./packages.sh
+          "${package_install[@]}" "${common[@]}" "${gnome[@]}" "${kde[@]}"
       - name: Run regression checks
         run: bash tests/run.sh
       - name: Build and verify installer

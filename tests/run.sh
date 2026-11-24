@@ -4,7 +4,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"; rm -f tests/extension-fixture.mjs' EXIT
-for script in install.sh setup.sh setup-kde.sh install-resume-hook.sh; do bash -n "$script"; done
+for script in install.sh packages.sh setup.sh setup-kde.sh install-resume-hook.sh; do bash -n "$script"; done
 sh -n 90-restart-iio-sensor-proxy
 python3 tests/test-resume.py
 cp lux-capacitor@extensions/schemas/*.xml "$temporary/"

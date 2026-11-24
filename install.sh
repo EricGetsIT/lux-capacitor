@@ -7,28 +7,39 @@ if (( EUID == 0 )); then
     echo 'Open this installer as your normal desktop user, without sudo.' >&2
     exit 1
 fi
-source /etc/os-release
+unset ID ID_LIKE
+# Tests can point LUX_OS_RELEASE at a temporary os-release file.
+source "${LUX_OS_RELEASE:-/etc/os-release}"
+source "$base/packages.sh"
 echo 'LUX CAPACITOR — guided installation'
-echo 'Screen and keyboard Auto, manual presets, percentage displays, and wake-up recovery.'
-version=$(gnome-shell --version 2>/dev/null || true)
-if [[ ! "$version" =~ GNOME\ Shell\ 5[01]([.]|$) ]]; then
-    echo "This bundle needs GNOME Shell 50 or 51. Found: ${version:-no GNOME Shell}. No changes made."
+gnome_version=$(gnome-shell --version 2>/dev/null) || gnome_version=
+plasma_version=$(plasmashell --version 2>/dev/null) || plasma_version=
+desktops=
+setups=()
+packages=("${common[@]}")
+if [[ $gnome_version =~ GNOME\ Shell\ 5[01]([.]|$) ]]; then
+    desktops=$gnome_version
+    setups+=(setup.sh)
+    packages+=("${gnome[@]}")
+fi
+if [[ $plasma_version =~ ^plasmashell[[:space:]]+([0-9]+)\.([0-9]+)(\.|$) ]] &&
+    (( BASH_REMATCH[1] > 6 || (BASH_REMATCH[1] == 6 && BASH_REMATCH[2] >= 2) )); then
+    desktops+="${desktops:+ and }KDE Plasma ${plasma_version#*[[:space:]]}"
+    setups+=(setup-kde.sh)
+    packages+=("${kde[@]}")
+fi
+if [[ -z $desktops ]]; then
+    echo "This bundle needs GNOME Shell 50 or 51, or KDE Plasma 6.2 or newer. Found: ${gnome_version:-no GNOME Shell}, ${plasma_version:-no Plasma}. No changes made."
     exit 1
 fi
-case "${ID:-}" in
-    fedora) ;;
-    ubuntu) ;;
-    *) echo 'This installer supports Ubuntu and Fedora with GNOME 50 or 51.'; exit 1 ;;
-esac
 command -v sudo >/dev/null || { echo 'Install sudo before running this installer.' >&2; exit 1; }
-echo 'It will install required packages, the extension, a system wake-up hook, and a systemd setting to restart the sensor service after a crash.'
-echo 'Your password may be requested; nothing appears while you type it.'
+echo "Lux Capacitor will be installed for $desktops."
+echo 'It will install required packages and set up sensor recovery after sleep or a service crash.'
+echo 'Your password may be requested. Nothing appears while you type it.'
 read -r -p 'Continue? [y/N] ' answer
 [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || exit 0
-case "$ID" in
-    fedora) sudo dnf install -y iio-sensor-proxy python3 python3-gobject dconf glib2 gnome-settings-daemon upower ;;
-    ubuntu) sudo apt-get update; sudo apt-get install -y iio-sensor-proxy python3 python3-gi dconf-cli libglib2.0-bin gnome-settings-daemon upower ;;
-esac
-bash "$base/setup.sh"
-echo 'Finished! Log out and back in. Then test in bright and dim light, and after sleep.'
+if [[ ${package_install[0]} == apt-get ]]; then sudo apt-get update; fi
+sudo "${package_install[@]}" "${packages[@]}"
+for setup in "${setups[@]}"; do bash "$base/$setup"; done
+echo "Finished installing Lux Capacitor for $desktops. Log out and back in. Then test in bright and dim light, and after sleep."
 echo 'Both Auto controls start on for a new installation. Existing brightness preferences are preserved.'
