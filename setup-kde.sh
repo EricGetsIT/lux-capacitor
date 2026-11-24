@@ -8,8 +8,8 @@ fi
 for tool in plasmashell gjs glib-compile-schemas; do
     command -v "$tool" >/dev/null || { echo "Required tool is missing: $tool" >&2; exit 1; }
 done
-# Qt opens a display even for --version. Installation can also run from a TTY.
-version=$(QT_QPA_PLATFORM=offscreen plasmashell --version)
+# Plasma 6.6 crashes with QT_QPA_PLATFORM=offscreen; --version works without a display.
+version=$(plasmashell --version 2>/dev/null || true)
 if ! [[ $version =~ ^plasmashell[[:space:]]+([0-9]+)\.([0-9]+)(\.|$) ]] ||
     (( BASH_REMATCH[1] < 6 || (BASH_REMATCH[1] == 6 && BASH_REMATCH[2] < 2) )); then
     echo "Lux Capacitor requires Plasma 6.2 or newer. Found: $version" >&2
