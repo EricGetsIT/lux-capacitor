@@ -1,12 +1,12 @@
 # Lux Capacitor
 
-**Automatic screen and keyboard brightness for Framework laptops running Ubuntu or Fedora with GNOME Shell 50 or 51.** Great lux, no flux.
+**Automatic screen and keyboard brightness for Framework laptops running GNOME Shell 50 or 51 or KDE Plasma 6.2+ on Ubuntu, Debian, Fedora, Arch or openSUSE.** Great lux, no flux.
 
-[Download the latest release](https://github.com/EricGetsIT/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Startup and recovery](#startup-and-recovery) · [Quick Settings screenshots](#quick-settings-controls)
+[Download the latest release](https://github.com/EricGetsIT/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Startup and recovery](#startup-and-recovery) · [Quick Settings screenshots](#quick-settings-controls) · [KDE Plasma](#kde-plasma)
 
 I built this for my **Framework Laptop 13 (AMD Ryzen AI 300 Series)** and tested it on Ubuntu and Fedora. It handles the Framework keyboard backlight and gets the ambient-light sensor working again after suspend. I haven't tested other Framework models yet. This is my community project, not an official Framework product.
 
-Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyboard Auto controls to Quick Settings, and restores sensor readings after suspend on supported Framework laptops. This is a GNOME Shell extension with an optional system resume hook, not a standalone application for every Linux desktop.
+Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyboard Auto controls to Quick Settings, and restores sensor readings after suspend on supported Framework laptops. On GNOME it is a Shell extension; on KDE Plasma it is a small background service with its own settings app. Both share the same settings and learned brightness, and both use an optional system resume hook. Other desktops are not supported.
 
 **GNOME's built-in Automatic Brightness must stay off while Lux Capacitor is enabled.** The extension turns it off automatically and keeps it off to prevent two controllers from competing. Use the extension's screen Auto switch instead. Disabling the extension restores the previous native setting; if it was already off, it stays off. Turning only the extension's screen Auto switch off does not hand control back to native automatic brightness.
 
@@ -16,12 +16,14 @@ Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyb
 | --- | --- |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 45, GNOME Shell 51 | v0.2.5: I recorded the Keyboard tile, the keyboard slider, Fn+Space and keyboard Auto on my laptop. v0.2.4: I checked screen Auto and learning, the brightness keys, volume, Quick Settings, lock, suspend and resume, and the settings window. The automated checks pass on Fedora 45. |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 44, GNOME Shell 50 | v0.2.1: I recorded keyboard Auto and Fn+Space on my laptop and confirmed them. Earlier versions: screen brightness, keyboard controls, and recovery after suspend. |
+| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, KDE Plasma 6.6 | v0.3.0 (beta): I checked screen Auto following the light and learning from Plasma's slider and brightness keys, keyboard Auto, Fn+Space, battery dimming, lock and unlock, and the settings app. |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | v0.2.9: I checked the Show percentages switch on the brightness, volume and keyboard popups. I checked the v0.2.7 keyboard controller on GNOME 50.1. Changing the keyboard level while docked kept the backlight off until I opened the lid. Keyboard Auto resumed on opening, and one Fn+Space press after idle stepped from 20% to 50%. Earlier checks include battery dimming and the lock screen on v0.2.6. |
 | Other Framework models | I haven't tested these yet. They need compatible light-sensor and keyboard-backlight interfaces. |
-| GNOME versions other than 50 and 51, or KDE, Xfce, Cinnamon | Not supported by this release. |
+| Debian 13, Arch, openSUSE, and Fedora KDE | Not hardware-tested. The installer supports them, and the automated checks, including a real install of every required package, pass in Debian 13, Arch and openSUSE Tumbleweed containers. Debian 13's GNOME 48 is too old, so on Debian only the KDE path applies. |
+| GNOME versions other than 50 and 51, Plasma older than 6.2, Xfce, Cinnamon | Not supported by this release. |
 | Other laptops with GNOME 50 or 51 | Not hardware-tested. Screen control needs an ambient-light sensor supported by iio-sensor-proxy. Keyboard behavior targets Framework's `chromeos::kbd_backlight` interface. |
 
-I installed this repeatedly on the same Framework laptop while switching between Ubuntu and Fedora, and checked the hardware behavior myself. The automated Ubuntu and Fedora checks test the software, not the physical sensor or suspend. See [TESTING.md](TESTING.md) for what I've checked and what still needs testing.
+I installed this repeatedly on the same Framework laptop while switching between Ubuntu and Fedora, and checked the hardware behavior myself. The automated checks (Ubuntu, Debian, Fedora, Arch and openSUSE containers) test the software, not the physical sensor or suspend. See [TESTING.md](TESTING.md) for what I've checked and what still needs testing.
 
 ## Features
 
@@ -49,9 +51,17 @@ These screenshots are from my Framework laptop on Ubuntu. Click the arrow beside
 
 Keyboard Auto can leave the backlight at 0% when the room is bright enough. The screenshots show the controls; the keyboard percentage reflects the current backlight level.
 
+## KDE Plasma
+
+On Plasma, Lux Capacitor runs as the systemd user service `lux-capacitor.service`, which starts only in Plasma sessions, so a laptop with both desktops uses the extension in GNOME and the service in Plasma. It sets brightness through Plasma's own brightness service, so Plasma's slider, brightness keys and popup stay in step, and moving the slider or pressing the keys teaches screen Auto just as on GNOME. Plasma has no built-in automatic brightness to turn off.
+
+Open **Lux Capacitor** from the application menu to change settings. It has the same options as on GNOME, plus **Screen** and **Keyboard** Auto switches, since Plasma has no Quick Settings. Two GNOME options are not available on Plasma: **Turn off when idle**, because Plasma on Wayland doesn't report idle time to apps, and **Show percentages**, because Plasma draws its own popups. A keyboard light change made by Plasma itself, such as its keyboard slider, counts as a manual choice and turns keyboard Auto off.
+
+KDE support is new in 0.3.0 and is marked beta until it has been tested on more systems.
+
 ## Settings
 
-Open Extensions, then Lux Capacitor → Settings, or run `gnome-extensions prefs lux-capacitor@extensions`. This screenshot uses two example adjustments in the graph.
+On GNOME, open Extensions, then Lux Capacitor → Settings, or run `gnome-extensions prefs lux-capacitor@extensions`. On Plasma, open **Lux Capacitor** from the application menu. This screenshot uses two example adjustments in the graph.
 
 <p>
   <img src="screenshots/settings-window.png" alt="Lux Capacitor settings window with screen options, a learned brightness graph, and keyboard options" width="420">
@@ -98,7 +108,7 @@ bash Install-Lux-Capacitor.run --check
 bash Install-Lux-Capacitor.run
 ```
 
-The installer checks for GNOME Shell 50 or 51, installs dependencies using apt on Ubuntu or dnf on Fedora, and requests sudo to install the system resume hook and sensor-service restart policy. Log out and back in afterward. Both Auto controls start enabled on a fresh installation. The installer preserves existing brightness settings and sets the volume step to 5.
+The installer detects GNOME Shell 50 or 51 and KDE Plasma 6.2 or newer, and sets up Lux Capacitor for each one it finds. It installs dependencies with apt on Ubuntu and Debian, dnf on Fedora, pacman on Arch, or zypper on openSUSE (derivatives such as Linux Mint or EndeavourOS are recognized), and requests sudo to install the system resume hook and sensor-service restart policy. Log out and back in afterward. Both Auto controls start enabled on a fresh installation. The installer preserves existing brightness settings, and on GNOME sets the volume step to 5.
 
 From a source checkout, run `bash install.sh` instead.
 
@@ -112,8 +122,8 @@ Since 0.2.2 the extension ID is `lux-capacitor@extensions`. The installer remove
 
 | Event | What the full installation does |
 | --- | --- |
-| Boot and login | The distribution starts `iio-sensor-proxy` when it detects compatible hardware. GNOME loads Lux Capacitor at login when user extensions are enabled. Lux Capacitor claims the light sensor when screen or keyboard Auto needs it. |
-| Lock and unlock | The extension runs in GNOME’s lock-screen session. Auto continues following the light, and the settings switches return on unlock. |
+| Boot and login | The distribution starts `iio-sensor-proxy` when it detects compatible hardware. GNOME loads Lux Capacitor at login when user extensions are enabled; Plasma starts `lux-capacitor.service`. Lux Capacitor claims the light sensor when screen or keyboard Auto needs it. |
+| Lock and unlock | The extension runs in GNOME’s lock-screen session, and the Plasma service keeps running while locked. Auto continues following the light, and on GNOME the settings switches return on unlock. |
 | Lid closed while docked | The extension releases the sensor and turns off the keyboard light. Opening the lid restores the selected manual level or resumes Auto with a fresh reading. |
 | Suspend and resume | After wake, the system sleep hook rebinds the matching Framework sensor if present, then queues a restart of `iio-sensor-proxy`. The extension reconnects when the service returns. |
 | Sensor service crash | The installer adds a systemd drop-in with `Restart=on-failure` and a five-second delay. A deliberate service stop stays stopped. An administrator’s overrides and systemd start limits still apply. |
@@ -121,7 +131,8 @@ Since 0.2.2 the extension ID is `lux-capacitor@extensions`. The installer remove
 After logging back in, run these as your desktop user:
 
 ```sh
-gnome-extensions info lux-capacitor@extensions
+gnome-extensions info lux-capacitor@extensions   # GNOME
+systemctl --user status lux-capacitor          # Plasma
 systemctl show iio-sensor-proxy.service -p ActiveState -p Restart -p RestartUSec -p DropInPaths
 test -x /usr/lib/systemd/system-sleep/90-restart-iio-sensor-proxy && echo 'Resume hook installed'
 gdbus call --system --dest net.hadess.SensorProxy --object-path /net/hadess/SensorProxy --method org.freedesktop.DBus.Properties.Get net.hadess.SensorProxy HasAmbientLight
@@ -131,13 +142,21 @@ On a supported laptop with the full install, look for an active extension and se
 
 ## Disable and remove
 
-Disable using GNOME Extensions, or run:
+On GNOME, disable it using GNOME Extensions, or run:
 
 ```sh
 gnome-extensions disable lux-capacitor@extensions
 ```
 
-Disabling the extension leaves the system recovery files installed. To remove the files installed by Lux Capacitor:
+On Plasma, stop and disable the service, or remove the Plasma part completely:
+
+```sh
+systemctl --user disable --now lux-capacitor.service
+rm -rf ~/.local/share/lux-capacitor ~/.config/systemd/user/lux-capacitor.service ~/.local/share/applications/lux-capacitor-settings.desktop
+systemctl --user daemon-reload
+```
+
+Disabling the extension or the service leaves the system recovery files installed. To remove the files installed by Lux Capacitor:
 
 ```sh
 sudo rm /usr/lib/systemd/system-sleep/90-restart-iio-sensor-proxy
@@ -158,7 +177,7 @@ bash dist/Install-Lux-Capacitor.run --check
 python3 tests/test-install.py "$PWD/dist/Install-Lux-Capacitor.run"
 ```
 
-Tests mock keyboard and Quick Settings objects; they do not write hardware brightness or install the extension. The install test runs the installer in a private settings session with package installation and root actions mocked. The build produces a standalone installer, an extension ZIP, and checksums in `dist/`.
+Tests mock the keyboard, Quick Settings and Plasma brightness objects; they do not write hardware brightness or install anything. The install test runs the installer in a private settings session with package installation and root actions mocked. The build produces a standalone installer, an extension ZIP, and checksums in `dist/`.
 
 ## License
 
