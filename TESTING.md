@@ -52,6 +52,10 @@ I've installed this same version 7 code multiple times on this Framework laptop 
 
 ## Automated checks
 
+For v0.2.8, systemd restarted a temporary failing user service after five seconds with the packaged restart settings. It stayed stopped when stopped deliberately. On the Ubuntu Framework 13, the installed sensor service reported an ambient-light sensor, and the system sleep journal recorded the Framework sensor rebind on multiple real wakes. The temporary service test exercised the crash policy independently of the laptop’s live sensor.
+
+The software checks exercise a sensor service disappearing and returning, including a late reply from its previous instance. The sleep-hook test uses a temporary driver directory and simulated systemctl calls to cover pre-sleep, wake with and without a Framework device, and failure recovery. CI installs the system files inside each disposable distro container and verifies the installed paths and the order of the service-manager calls.
+
 `bash tests/run.sh` compiles the schema in a temporary directory, validates JavaScript syntax, checks the brightness policy (including that learned preferences never dim the screen in brighter light and stay exact at their own light level), and runs keyboard and screen regressions against mocks. Screen regressions cover the sensor-noise dead zone, saving a slider drag once, resetting preferences when Auto is turned off, saving on lock, and cleaning up stored contradictions. These cover preset remapping, duplicate firmware signals, manual takeover, sensor response, idle dimming, stale hardware reads, and numeric UI feedback, and volume slider OSD feedback with backend synchronization and disable/re-enable cleanup. OSD regressions also cover rapid level reversals, multiple monitors, amplified volume, and preservation of unrelated OSD animations.
 
 The GitHub workflow runs the software checks in Ubuntu 26.04, Fedora 44, and Fedora 45 containers. Container checks cannot verify real light sensors, physical hotkeys, or suspend/resume. All three container jobs passed in [this GitHub Actions run](https://github.com/iErick17/lux-capacitor/actions/runs/40059011732).

@@ -17,8 +17,8 @@ recover() {
     exit "$result"
 }
 
-/usr/bin/systemctl stop iio-sensor-proxy.service
 trap recover EXIT
+/usr/bin/systemctl stop iio-sensor-proxy.service
 for path in "$driver"/i2c-FRMW0005:*; do
     [ -e "$path" ] || continue
     device=${path##*/}

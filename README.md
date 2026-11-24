@@ -2,7 +2,7 @@
 
 **Automatic screen and keyboard brightness for Framework laptops running Ubuntu or Fedora with GNOME Shell 50 or 51.** Great lux, no flux.
 
-[Download the latest release](https://github.com/iErick17/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Quick Settings screenshots](#quick-settings-controls)
+[Download the latest release](https://github.com/iErick17/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Startup and recovery](#startup-and-recovery) · [Quick Settings screenshots](#quick-settings-controls)
 
 I built this for my **Framework Laptop 13 (AMD Ryzen AI 300 Series)** and tested it on Ubuntu and Fedora. It handles the Framework keyboard backlight and gets the ambient-light sensor working again after suspend. I haven't tested other Framework models yet. This is my community project, not an official Framework product.
 
@@ -92,15 +92,36 @@ bash Install-Lux-Capacitor.run --check
 bash Install-Lux-Capacitor.run
 ```
 
-The installer checks for GNOME Shell 50 or 51, installs dependencies using apt on Ubuntu or dnf on Fedora, and requests sudo for the system resume hook. Log out and back in afterward. Both Auto controls start enabled on a fresh installation. Existing brightness settings are preserved; the volume step is set to 5.
+The installer checks for GNOME Shell 50 or 51, installs dependencies using apt on Ubuntu or dnf on Fedora, and requests sudo to install the system resume hook and sensor-service restart policy. Log out and back in afterward. Both Auto controls start enabled on a fresh installation. The installer preserves existing brightness settings and sets the volume step to 5.
 
 From a source checkout, run `bash install.sh` instead.
 
 The installer preserves GNOME’s master extensions switch. If you turned it off, turn it on in the Extensions app when you’re ready to use Lux Capacitor and your other enabled extensions.
 
-The extension ZIP can also be installed with `gnome-extensions install --force <file>.shell-extension.zip`, followed by logout/login and `gnome-extensions enable lux-capacitor@extensions`. This installs the extension only: it does not install dependencies, set the volume step, or install the system resume hook.
+To install just the GNOME extension, run `gnome-extensions install --force <file>.shell-extension.zip`, log out and back in, then run `gnome-extensions enable lux-capacitor@extensions`. With the ZIP, you manage dependencies, sleep recovery and the sensor-service restart policy yourself.
 
 Since 0.2.2 the extension ID is `lux-capacitor@extensions`. The installer removes copies installed under earlier IDs (after backing them up) so two brightness controllers never run at once. Since 0.2.6 the settings and installation backups are stored under the name `lux-capacitor` instead of `adaptive-brightness`; settings from earlier releases are moved over the first time the new version is installed or enabled. If you install the ZIP by hand instead, uninstall the previous version first.
+
+## Startup and recovery
+
+| Event | What the full installation does |
+| --- | --- |
+| Boot and login | The distribution starts `iio-sensor-proxy` when it detects compatible hardware. GNOME loads Lux Capacitor at login when user extensions are enabled. Lux Capacitor claims the light sensor when screen or keyboard Auto needs it. |
+| Lock and unlock | The extension runs in GNOME’s lock-screen session. Auto continues following the light, and the settings switches return on unlock. |
+| Lid closed while docked | The extension releases the sensor and turns off the keyboard light. Opening the lid restores the selected manual level or resumes Auto with a fresh reading. |
+| Suspend and resume | After wake, the system sleep hook rebinds the matching Framework sensor if present, then queues a restart of `iio-sensor-proxy`. The extension reconnects when the service returns. |
+| Sensor service crash | The installer adds a systemd drop-in with `Restart=on-failure` and a five-second delay. A deliberate service stop stays stopped. An administrator’s overrides and systemd start limits still apply. |
+
+After logging back in, run these as your desktop user:
+
+```sh
+gnome-extensions info lux-capacitor@extensions
+systemctl show iio-sensor-proxy.service -p ActiveState -p Restart -p RestartUSec -p DropInPaths
+test -x /usr/lib/systemd/system-sleep/90-restart-iio-sensor-proxy && echo 'Resume hook installed'
+gdbus call --system --dest net.hadess.SensorProxy --object-path /net/hadess/SensorProxy --method org.freedesktop.DBus.Properties.Get net.hadess.SensorProxy HasAmbientLight
+```
+
+On a supported laptop with the full install, look for an active extension and sensor service, `Restart=on-failure`, a five-second delay, the project’s drop-in, and a `true` sensor result. To check wake recovery, suspend normally, wake the laptop, cover and uncover the sensor with Auto on, and inspect `journalctl -b -u systemd-suspend.service -u iio-sensor-proxy.service`. On the tested Framework 13, the sleep hook logs `Reinitialized ambient-light sensor` followed by the device name.
 
 ## Disable and remove
 
@@ -110,10 +131,12 @@ Disable using GNOME Extensions, or run:
 gnome-extensions disable lux-capacitor@extensions
 ```
 
-The system resume hook remains installed. To remove it, if you installed it through this project:
+Disabling the extension leaves the system recovery files installed. To remove the files installed by Lux Capacitor:
 
 ```sh
 sudo rm /usr/lib/systemd/system-sleep/90-restart-iio-sensor-proxy
+sudo rm -f /usr/lib/systemd/system/iio-sensor-proxy.service.d/50-lux-capacitor-restart.conf
+sudo systemctl daemon-reload
 ```
 
 Remove the extension through GNOME Extensions or `gnome-extensions uninstall lux-capacitor@extensions`. Disable it first. Installation backups of the previous extension and settings are stored under `~/.local/state/lux-capacitor/`; the installer keeps the five most recent. Disabling does not restore the volume step; its previous value is in the backup's `desktop-settings.json`.

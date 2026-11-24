@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Exercise the release installer in a private settings session, with root actions mocked."""
+import configparser
 import hashlib
 import io
 import json
@@ -23,6 +24,10 @@ with tempfile.TemporaryDirectory() as directory:
     for line in (source / 'SHA256SUMS').read_text().splitlines():
         digest, name = line.split('  ', 1)
         assert hashlib.sha256((source / name).read_bytes()).hexdigest() == digest
+    recovery = configparser.ConfigParser()
+    recovery.read(source / '50-lux-capacitor-restart.conf')
+    assert recovery.get('Service', 'Restart', fallback=None) == 'on-failure', 'Missing sensor crash recovery in installer'
+    assert recovery.get('Service', 'RestartSec') == '5s', 'Missing delay between sensor restarts'
     commands = root / 'bin'
     commands.mkdir()
     log = root / 'commands.log'

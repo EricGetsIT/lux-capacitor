@@ -21,7 +21,7 @@ case "${ID:-}" in
     *) echo 'This installer supports Ubuntu and Fedora with GNOME 50 or 51.'; exit 1 ;;
 esac
 command -v sudo >/dev/null || { echo 'Install sudo before running this installer.' >&2; exit 1; }
-echo 'It will install required packages, the extension, and a system wake-up hook.'
+echo 'It will install required packages, the extension, a system wake-up hook, and a systemd setting to restart the sensor service after a crash.'
 echo 'Your password may be requested; nothing appears while you type it.'
 read -r -p 'Continue? [y/N] ' answer
 [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || exit 0

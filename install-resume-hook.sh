@@ -12,8 +12,11 @@ fi
 install -d -m 755 /usr/lib/systemd/system-sleep
 base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 install -m 755 "$base/90-restart-iio-sensor-proxy" "$hook"
-if command -v restorecon >/dev/null; then restorecon "$hook"; fi
+dropin=/usr/lib/systemd/system/iio-sensor-proxy.service.d/50-lux-capacitor-restart.conf
+install -D -m 644 "$base/50-lux-capacitor-restart.conf" "$dropin"
+if command -v restorecon >/dev/null; then restorecon "$hook" "$dropin"; fi
 sh -n "$hook"
+systemctl daemon-reload
 systemctl restart iio-sensor-proxy.service
 systemctl is-active iio-sensor-proxy.service
-echo 'Installed sensor recovery after resume and restarted the sensor now.'
+echo 'Installed sensor recovery after sleep and service crashes. The sensor service is active.'

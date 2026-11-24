@@ -26,5 +26,19 @@ jobs:
         run: |
           python3 build.py
           bash dist/Install-Lux-Capacitor.run --check
+      - name: Verify system hook installation in the disposable container
+        shell: bash
+        run: |
+          stub=$(mktemp -d)
+          printf '#!/bin/sh\necho "$*" >> "$SYSTEMCTL_LOG"\n' > "$stub/systemctl"
+          chmod +x "$stub/systemctl"
+          export SYSTEMCTL_LOG="$stub/systemctl.log"
+          PATH="$stub:$PATH" bash install-resume-hook.sh
+          hook=/usr/lib/systemd/system-sleep/90-restart-iio-sensor-proxy
+          dropin=/usr/lib/systemd/system/iio-sensor-proxy.service.d/50-lux-capacitor-restart.conf
+          test -x "$hook"
+          cmp 90-restart-iio-sensor-proxy "$hook"
+          cmp 50-lux-capacitor-restart.conf "$dropin"
+          printf '%s\n' 'cat iio-sensor-proxy.service' 'daemon-reload' 'restart iio-sensor-proxy.service' 'is-active iio-sensor-proxy.service' | diff - "$SYSTEMCTL_LOG"
       - name: Fresh-install and upgrade checks in isolated settings
         run: runuser -u nobody -- python3 tests/test-install.py "$PWD/dist/Install-Lux-Capacitor.run"

@@ -6,6 +6,7 @@ temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"; rm -f tests/extension-fixture.mjs' EXIT
 for script in install.sh setup.sh install-resume-hook.sh; do bash -n "$script"; done
 sh -n 90-restart-iio-sensor-proxy
+python3 tests/test-resume.py
 cp lux-capacitor@extensions/schemas/*.xml "$temporary/"
 glib-compile-schemas --strict "$temporary"
 python3 - <<'PY'

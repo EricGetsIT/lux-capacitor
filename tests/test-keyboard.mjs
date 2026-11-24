@@ -574,6 +574,27 @@ test('Closing the lid releases the light sensor and opening it resumes screen Au
     assert(claimed === 1 && e._lux === 300 && targets.length === 2, 'screen Auto did not resume after opening the lid');
 });
 
+test('Sensor service restart discards stale claims and resumes Auto on a fresh reading', () => {
+    const {e, targets} = screenFixture();
+    let owner = ':1.20';
+    const claims = [];
+    Object.assign(e, {_sensorClaimed: false, _sensorGeneration: 0, _sensor: {
+        HasAmbientLight: true, LightLevel: 20, LightLevelUnit: 'lux',
+        get_name_owner: () => owner, ClaimLightRemote: callback => claims.push(callback),
+    }});
+    e._claimSensor();
+    owner = null;
+    e._onSensorOwnerChanged();
+    owner = ':1.21';
+    e._sensor.LightLevel = 80;
+    e._onSensorOwnerChanged();
+    assert(claims.length === 2, 'the replacement sensor service was not claimed');
+    claims[0](null, null);
+    assert(!e._sensorClaimed && e._lux === null && targets.length === 0, 'a stale claim moved the screen');
+    claims[1](null, null);
+    assert(e._sensorClaimed && e._lux === 80 && targets.length === 1, 'Auto did not resume on the new service');
+});
+
 test('Contradicting preferences stored by earlier versions are cleaned up on load', () => {
     const {e} = screenFixture('[{"lux":40,"brightness":0.9},{"lux":150,"brightness":0.3}]');
     assert(e._anchors.length === 1 && e._anchors[0].lux === 150, 'stored contradiction was kept');
