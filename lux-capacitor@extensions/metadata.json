@@ -11,7 +11,7 @@
     "unlock-dialog"
   ],
   "settings-schema": "org.gnome.shell.extensions.lux-capacitor",
-  "version": 17,
-  "version-name": "0.2.6",
+  "version": 18,
+  "version-name": "0.2.7",
   "url": "https://github.com/iErick17/lux-capacitor"
 }

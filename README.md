@@ -2,6 +2,8 @@
 
 **Automatic screen and keyboard brightness for Framework laptops running Ubuntu or Fedora with GNOME Shell 50 or 51.** Great lux, no flux.
 
+[Download the latest release](https://github.com/iErick17/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Quick Settings screenshots](#quick-settings-controls)
+
 I built this for my **Framework Laptop 13 (AMD Ryzen AI 300 Series)** and tested it on Ubuntu and Fedora. It handles the Framework keyboard backlight and gets the ambient-light sensor working again after suspend. I haven't tested other Framework models yet. This is my community project, not an official Framework product.
 
 Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyboard Auto controls to Quick Settings, and restores sensor readings after suspend on supported Framework laptops. This is a GNOME Shell extension with an optional system resume hook, not a standalone application for every Linux desktop.
@@ -14,7 +16,7 @@ Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyb
 | --- | --- |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 45, GNOME Shell 51 | v0.2.5: I recorded the Keyboard tile, the keyboard slider, Fn+Space and keyboard Auto on my laptop. v0.2.4: I checked screen Auto and learning, the brightness keys, volume, Quick Settings, lock, suspend and resume, and the settings window. The automated checks pass on Fedora 45. |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 44, GNOME Shell 50 | v0.2.1: I recorded keyboard Auto and Fn+Space on my laptop and confirmed them. Earlier versions: screen brightness, keyboard controls, and recovery after suspend. |
-| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | v0.2.6: I checked dimming on battery and the lock screen on my laptop. I used it on my laptop up to v0.1.2 and haven't tested the rest of v0.2.x on Ubuntu hardware yet; the automated checks pass. |
+| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | I checked the v0.2.7 keyboard controller on GNOME 50.1. Changing the keyboard level while docked kept the backlight off until I opened the lid. Keyboard Auto resumed on opening, and one Fn+Space press after idle stepped from 20% to 50%. Earlier checks include battery dimming and the lock screen on v0.2.6. |
 | Other Framework models | I haven't tested these yet. They need compatible light-sensor and keyboard-backlight interfaces. |
 | GNOME versions other than 50 and 51, or KDE, Xfce, Cinnamon | Not supported by this release. |
 | Other laptops with GNOME 50 or 51 | Not hardware-tested. Screen control needs an ambient-light sensor supported by iio-sensor-proxy. Keyboard behavior targets Framework's `chromeos::kbd_backlight` interface. |
@@ -94,7 +96,7 @@ The installer checks for GNOME Shell 50 or 51, installs dependencies using apt o
 
 From a source checkout, run `bash install.sh` instead.
 
-The source installer preserves GNOME’s master extensions switch. If you turned it off, turn it on in the Extensions app when you’re ready to use Lux Capacitor and your other enabled extensions.
+The installer preserves GNOME’s master extensions switch. If you turned it off, turn it on in the Extensions app when you’re ready to use Lux Capacitor and your other enabled extensions.
 
 The extension ZIP can also be installed with `gnome-extensions install --force <file>.shell-extension.zip`, followed by logout/login and `gnome-extensions enable lux-capacitor@extensions`. This installs the extension only: it does not install dependencies, set the volume step, or install the system resume hook.
 
