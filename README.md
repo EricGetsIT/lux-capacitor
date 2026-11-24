@@ -2,7 +2,7 @@
 
 **Automatic screen and keyboard brightness for Framework laptops running Ubuntu or Fedora with GNOME Shell 50 or 51.** Great lux, no flux.
 
-[Download the latest release](https://github.com/iErick17/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Startup and recovery](#startup-and-recovery) · [Quick Settings screenshots](#quick-settings-controls)
+[Download the latest release](https://github.com/EricGetsIT/lux-capacitor/releases/latest) · [Installation instructions](#install) · [Startup and recovery](#startup-and-recovery) · [Quick Settings screenshots](#quick-settings-controls)
 
 I built this for my **Framework Laptop 13 (AMD Ryzen AI 300 Series)** and tested it on Ubuntu and Fedora. It handles the Framework keyboard backlight and gets the ambient-light sensor working again after suspend. I haven't tested other Framework models yet. This is my community project, not an official Framework product.
 
@@ -16,7 +16,7 @@ Lux Capacitor adjusts brightness to ambient light, adds separate screen and keyb
 | --- | --- |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 45, GNOME Shell 51 | v0.2.5: I recorded the Keyboard tile, the keyboard slider, Fn+Space and keyboard Auto on my laptop. v0.2.4: I checked screen Auto and learning, the brightness keys, volume, Quick Settings, lock, suspend and resume, and the settings window. The automated checks pass on Fedora 45. |
 | Framework Laptop 13 (AMD Ryzen AI 300 Series), Fedora Workstation 44, GNOME Shell 50 | v0.2.1: I recorded keyboard Auto and Fn+Space on my laptop and confirmed them. Earlier versions: screen brightness, keyboard controls, and recovery after suspend. |
-| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | I checked the v0.2.7 keyboard controller on GNOME 50.1. Changing the keyboard level while docked kept the backlight off until I opened the lid. Keyboard Auto resumed on opening, and one Fn+Space press after idle stepped from 20% to 50%. Earlier checks include battery dimming and the lock screen on v0.2.6. |
+| Framework Laptop 13 (AMD Ryzen AI 300 Series), Ubuntu 26.04.1, GNOME Shell 50 | v0.2.9: I checked the Show percentages switch on the brightness, volume and keyboard popups. I checked the v0.2.7 keyboard controller on GNOME 50.1. Changing the keyboard level while docked kept the backlight off until I opened the lid. Keyboard Auto resumed on opening, and one Fn+Space press after idle stepped from 20% to 50%. Earlier checks include battery dimming and the lock screen on v0.2.6. |
 | Other Framework models | I haven't tested these yet. They need compatible light-sensor and keyboard-backlight interfaces. |
 | GNOME versions other than 50 and 51, or KDE, Xfce, Cinnamon | Not supported by this release. |
 | Other laptops with GNOME 50 or 51 | Not hardware-tested. Screen control needs an ambient-light sensor supported by iio-sensor-proxy. Keyboard behavior targets Framework's `chromeos::kbd_backlight` interface. |
@@ -91,7 +91,7 @@ The Framework firmware locks the keyboard light off when Fn+Space turns it off f
 
 ## Install
 
-Download `Install-Lux-Capacitor.run` (named `Install-Auto-Brightness.run` in releases up to 0.2.5) from the [latest release](https://github.com/iErick17/lux-capacitor/releases/latest), then run it as your normal desktop user:
+Download `Install-Lux-Capacitor.run` (named `Install-Auto-Brightness.run` in releases up to 0.2.5) from the [latest release](https://github.com/EricGetsIT/lux-capacitor/releases/latest), then run it as your normal desktop user:
 
 ```sh
 bash Install-Lux-Capacitor.run --check
