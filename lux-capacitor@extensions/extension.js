@@ -7,48 +7,13 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {
-    BATTERY_DIM_FACTOR,
-    advanceBrightness,
-    parseAnchors,
-    preferredBrightness,
-    significantLuxChange,
-    upsertPreference,
-} from './brightnessModel.js';
 import {KeyboardController, isLevel, removeSource} from './keyboardController.js';
-
-const SENSOR_XML = `
-<node>
-  <interface name="net.hadess.SensorProxy">
-    <method name="ClaimLight"/>
-    <method name="ReleaseLight"/>
-    <property name="HasAmbientLight" type="b" access="read"/>
-    <property name="LightLevel" type="d" access="read"/>
-    <property name="LightLevelUnit" type="s" access="read"/>
-  </interface>
-</node>`;
-const SensorProxy = Gio.DBusProxy.makeProxyWrapper(SENSOR_XML);
-
-const UPOWER_XML = `
-<node>
-  <interface name="org.freedesktop.UPower">
-    <property name="OnBattery" type="b" access="read"/>
-    <property name="LidIsClosed" type="b" access="read"/>
-    <property name="LidIsPresent" type="b" access="read"/>
-  </interface>
-</node>`;
-const UPowerProxy = Gio.DBusProxy.makeProxyWrapper(UPOWER_XML);
-const SCREEN_OPTION_KEYS = ['transition-speed', 'light-sensitivity',
-    'screen-min-brightness', 'screen-max-brightness', 'dim-on-battery'];
+import {BRIGHTNESS_EPSILON, ScreenController} from './screenController.js';
 
 const POWER_SCHEMA = 'org.gnome.settings-daemon.plugins.power';
 // Releases up to 0.2.5 stored their settings here.
 const LEGACY_SETTINGS_PATH = '/org/gnome/shell/extensions/adaptive-brightness/';
-const TICK_MS = 100;
-const MANUAL_HOLD_US = 1_500_000;
-const EPSILON = 0.003;
 const KEY_STEP = 0.05;
-const SAVE_DELAY_MS = 500;
 
 // Replace object[name] with wrap(original). The returned function restores
 // the original, unless something else has replaced the method since.
@@ -73,25 +38,6 @@ export default class LuxCapacitorExtension extends Extension {
         this._migrateLegacySettings();
         this._powerSettings = new Gio.Settings({schema_id: POWER_SCHEMA});
         this._manager = Main.brightnessManager;
-        this._anchors = this._loadAnchors();
-        this._anchorUnit = this._settings.get_string('anchor-unit');
-        this._saveAnchorsId = 0;
-        this._autoEnabled = this._settings.get_boolean('enabled');
-        this._lux = null;
-        this._targetLux = null;
-        this._unit = null;
-        this._target = null;
-        this._level = null;
-        this._holdUntil = 0;
-        this._lastTick = 0;
-        this._timerId = 0;
-        this._sensorRetryId = 0;
-        this._claimRetryId = 0;
-        this._sensor = null;
-        this._cancellable = new Gio.Cancellable();
-        this._sensorClaimed = false;
-        this._claimPending = false;
-        this._sensorGeneration = 0;
         this._applying = false;
         this._destroyed = false;
         this._originalKeySteps = new Map();
@@ -111,12 +57,6 @@ export default class LuxCapacitorExtension extends Extension {
         this._keyboardSliderId = 0;
         this._keyboardDiscreteId = 0;
 
-        this._onBattery = false;
-        this._lidClosed = false;
-        this._upower = null;
-        this._writingAnchors = false;
-        this._readScreenOptions();
-
         this._keyboard = new KeyboardController({
             settings: this._settings,
             idleMonitor: global.backend.get_core_idle_monitor(),
@@ -124,16 +64,16 @@ export default class LuxCapacitorExtension extends Extension {
             onManualChanged: level => this._showKeyboardOSD(level),
             isDimming: () => this._manager?.dimming ?? false,
         });
-        this._lastKeyboardAuto = this._keyboard.autoEnabled;
-
-        this._settingsIds = [
-            this._settings.connect('changed::enabled', () => this._onEnabledChanged()),
-            this._settings.connect('changed::anchors', () => this._onAnchorsChanged()),
-            ...SCREEN_OPTION_KEYS.map(key =>
-                this._settings.connect(`changed::${key}`, () => this._onScreenOptionsChanged())),
-        ];
-        this._userUpdateId = this._manager.connect('user-update',
-            () => this._onUserUpdate());
+        this._screen = new ScreenController({
+            settings: this._settings,
+            backend: this._createScreenBackend(),
+            keyboard: this._keyboard,
+            onStateChanged: () => this._syncToggle(),
+        });
+        this._userUpdateId = this._manager.connect('user-update', () => {
+            if (!this._applying)
+                this._screen.onUserChange();
+        });
         this._managerChangedId = this._manager.connect('changed',
             () => this._onManagerChanged());
 
@@ -145,8 +85,7 @@ export default class LuxCapacitorExtension extends Extension {
         this._patchSpeakerOSD();
         this._scheduleQuickSettingsMenus();
         this._keyboard.enable();
-        this._connectSensor();
-        this._connectUPower();
+        this._screen.start();
         // The extension also runs on the lock screen (session-modes), so
         // GNOME no longer hands brightness back to its own, much brighter,
         // automatic brightness whenever the screen locks. Only the Auto
@@ -157,15 +96,10 @@ export default class LuxCapacitorExtension extends Extension {
 
     disable() {
         this._destroyed = true;
-        this._stopTimer();
         if (this._sessionModeId)
             Main.sessionMode.disconnect(this._sessionModeId);
         this._sessionModeId = 0;
-        // Disable runs on logout, so write a pending preference now.
-        if (this._saveAnchorsId) {
-            this._saveAnchorsId = removeSource(this._saveAnchorsId);
-            this._saveAnchors();
-        }
+        this._screen?.stop();
         this._menuSetupId = removeSource(this._menuSetupId);
         this._removeScreenAutoSwitch();
         this._keyboardAutoMenuItem?.destroy();
@@ -178,20 +112,6 @@ export default class LuxCapacitorExtension extends Extension {
         this._restoreBrightnessOSD();
         this._restoreSpeakerSlider();
         this._restoreSpeakerOSD();
-        this._sensorRetryId = removeSource(this._sensorRetryId);
-        this._claimRetryId = removeSource(this._claimRetryId);
-        this._releaseSensor();
-        this._cancellable?.cancel();
-
-        if (this._sensor) {
-            this._sensor.disconnectObject(this);
-            this._sensor = null;
-        }
-        for (const id of this._settingsIds ?? [])
-            this._settings.disconnect(id);
-        this._settingsIds = [];
-        this._upower?.disconnectObject(this);
-        this._upower = null;
         if (this._userUpdateId)
             this._manager.disconnect(this._userUpdateId);
         if (this._managerChangedId)
@@ -204,7 +124,7 @@ export default class LuxCapacitorExtension extends Extension {
         this._manager = null;
         this._settings = null;
         this._powerSettings = null;
-        this._cancellable = null;
+        this._screen = null;
     }
 
     // Move values an earlier release stored under the old settings path.
@@ -290,11 +210,21 @@ export default class LuxCapacitorExtension extends Extension {
         return values.length > 0 ? Math.max(...values) : null;
     }
 
+    _createScreenBackend() {
+        const manager = this._manager;
+        return {
+            get value() {
+                return manager.globalScale?.value ?? null;
+            },
+            setSilently: value => this._setBrightnessSilently(value),
+        };
+    }
+
     _setBrightnessSilently(value) {
         const manager = this._manager;
         if (!manager?.globalScale)
             return;
-        if (Math.abs(manager.globalScale.value - value) < EPSILON &&
+        if (Math.abs(manager.globalScale.value - value) < BRIGHTNESS_EPSILON &&
             manager.autoBrightnessTarget < 0)
             return;
 
@@ -325,201 +255,24 @@ export default class LuxCapacitorExtension extends Extension {
             manager._sync({showOSD: false});
     }
 
-    _onUserUpdate() {
-        if (this._applying || !this._autoEnabled || this._lux === null)
-            return;
-        const value = this._manager.globalScale?.value;
-        if (!Number.isFinite(value))
-            return;
-
-        // Store the undimmed preference so battery dimming stays a small,
-        // separate adjustment on top of what the user chose.
-        this._anchors = upsertPreference(this._anchors, this._lux,
-            Math.min(1, value / this._batteryFactor()));
-        this._anchorUnit = this._unit ?? '';
-        this._scheduleAnchorSave();
-        this._targetLux = this._lux;
-        this._target = value;
-        this._holdUntil = GLib.get_monotonic_time() + MANUAL_HOLD_US;
-        this._stopTimer();
-    }
-
     _onManagerChanged() {
         this._enforceKeyStep();
         this._scheduleQuickSettingsMenus();
         this._keepScreenMenuAvailable();
-        if (this._autoEnabled && this._lux !== null)
-            this._retarget(this._lux);
-        this._syncToggle();
-    }
-
-    _onEnabledChanged() {
-        const enabled = this._settings.get_boolean('enabled');
-        if (enabled === this._autoEnabled)
-            return;
-        this._autoEnabled = enabled;
-
-        // Turning Auto off or on resets learned preferences to the default curve.
-        this._clearAnchors();
-        this._targetLux = null;
-        this._target = null;
-        this._holdUntil = 0;
-        this._stopTimer();
-
-        if (enabled) {
-            if (this._sensorClaimed)
-                this._readLux();
-            else
-                this._claimSensor();
-        } else {
-            this._updateSensorClaim();
-        }
+        this._screen.retarget();
         this._syncToggle();
     }
 
     _onKeyboardChanged() {
         if (this._destroyed)
             return;
-        const autoEnabled = this._keyboard?.autoEnabled ?? false;
-        const resumedAuto = autoEnabled && !this._lastKeyboardAuto;
-        this._lastKeyboardAuto = autoEnabled;
         this._syncKeyboardToggle();
-        this._updateSensorClaim();
-        if (resumedAuto && this._sensorClaimed)
-            this._readLux();
-    }
-
-    _sensorDesired() {
-        return !this._lidClosed && (this._autoEnabled || !!this._keyboard?.autoEnabled);
-    }
-
-    _updateSensorClaim() {
-        if (this._sensorDesired()) {
-            this._claimSensor();
-        } else {
-            this._releaseSensor();
-            this._claimRetryId = removeSource(this._claimRetryId);
-        }
-    }
-
-    _loadAnchors() {
-        // Earlier versions could store contradicting preferences.
-        return parseAnchors(this._settings.get_string('anchors'));
-    }
-
-    _scheduleAnchorSave() {
-        // A slider drag emits many updates; write the settled preference once.
-        removeSource(this._saveAnchorsId);
-        this._saveAnchorsId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SAVE_DELAY_MS,
-            () => {
-                this._saveAnchorsId = 0;
-                this._saveAnchors();
-                return GLib.SOURCE_REMOVE;
-            });
-    }
-
-    _saveAnchors() {
-        this._writingAnchors = true;
-        try {
-            this._settings.set_string('anchors', JSON.stringify(this._anchors));
-            this._settings.set_string('anchor-unit', this._anchorUnit);
-        } finally {
-            this._writingAnchors = false;
-        }
-    }
-
-    _onAnchorsChanged() {
-        // The preferences window resets learned brightness through settings.
-        if (this._writingAnchors)
-            return;
-        this._saveAnchorsId = removeSource(this._saveAnchorsId);
-        this._anchors = this._loadAnchors();
-        this._anchorUnit = this._settings.get_string('anchor-unit');
-        this._retargetNow();
-    }
-
-    _readScreenOptions() {
-        this._speed = this._settings.get_string('transition-speed');
-        this._sensitivity = this._settings.get_string('light-sensitivity');
-        this._limits = {
-            min: this._settings.get_int('screen-min-brightness') / 100,
-            max: this._settings.get_int('screen-max-brightness') / 100,
-        };
-        this._dimOnBattery = this._settings.get_boolean('dim-on-battery');
-    }
-
-    _onScreenOptionsChanged() {
-        this._readScreenOptions();
-        this._retargetNow();
-    }
-
-    _retargetNow() {
-        this._targetLux = null;
-        if (this._autoEnabled && this._lux !== null)
-            this._retarget(this._lux);
-    }
-
-    _batteryFactor() {
-        return this._dimOnBattery && this._onBattery ? BATTERY_DIM_FACTOR : 1;
-    }
-
-    _connectUPower() {
-        const cancellable = this._cancellable;
-        new UPowerProxy(Gio.DBus.system, 'org.freedesktop.UPower',
-            '/org/freedesktop/UPower', (proxy, error) => {
-                // A request cancelled by disable() can finish after a quick
-                // re-enable; it belongs to the previous session.
-                if (this._destroyed || cancellable !== this._cancellable)
-                    return;
-                if (error) {
-                    console.error(`Lux Capacitor: power status unavailable: ${error}`);
-                    return;
-                }
-                this._upower = proxy;
-                proxy.connectObject('g-properties-changed', () => this._onPowerChanged(), this);
-                this._onPowerChanged();
-            }, cancellable);
-    }
-
-    _onPowerChanged() {
-        const lidClosed = !!this._upower?.LidIsPresent && !!this._upower?.LidIsClosed;
-        if (lidClosed !== this._lidClosed) {
-            this._lidClosed = lidClosed;
-            this._onLidChanged();
-        }
-        const onBattery = !!this._upower?.OnBattery;
-        if (onBattery === this._onBattery)
-            return;
-        this._onBattery = onBattery;
-        if (this._dimOnBattery)
-            this._retargetNow();
-    }
-
-    // A closed lid covers the light sensor, which then reads darkness, and
-    // hides the built-in screen and keyboard. Docked laptops keep running
-    // like this, so release the sensor and turn the keyboard light off until
-    // the lid opens; the reopened sensor's first reading retargets both.
-    _onLidChanged() {
-        this._keyboard?.setLidClosed(this._lidClosed);
-        if (this._lidClosed) {
-            this._stopTimer();
-            this._lux = null;
-        }
-        this._targetLux = null;
-        this._updateSensorClaim();
-        this._syncToggle();
-    }
-
-    _clearAnchors() {
-        this._saveAnchorsId = removeSource(this._saveAnchorsId);
-        this._anchors = [];
-        this._anchorUnit = '';
-        this._saveAnchors();
+        this._screen.onKeyboardChanged();
     }
 
     _syncToggle() {
         if (this._screenAutoMenuItem)
-            this._screenAutoMenuItem.state = this._autoEnabled;
+            this._screenAutoMenuItem.state = this._screen.autoEnabled;
     }
 
     _syncKeyboardToggle() {
@@ -559,182 +312,6 @@ export default class LuxCapacitorExtension extends Extension {
         ]);
         Main.osdWindowManager.showAll(icon, this._showNumbers() ? `${level}%` : null,
             level / 100, 1);
-    }
-
-    _connectSensor() {
-        const cancellable = this._cancellable;
-        new SensorProxy(Gio.DBus.system, 'net.hadess.SensorProxy',
-            '/net/hadess/SensorProxy', (proxy, error) => {
-                if (this._destroyed || cancellable !== this._cancellable)
-                    return;
-                if (error) {
-                    console.error(`Lux Capacitor: light sensor unavailable: ${error}`);
-                    this._syncToggle();
-                    this._sensorRetryId = GLib.timeout_add_seconds(
-                        GLib.PRIORITY_DEFAULT, 15, () => {
-                            this._sensorRetryId = 0;
-                            this._connectSensor();
-                            return GLib.SOURCE_REMOVE;
-                        });
-                    return;
-                }
-
-                this._sensor = proxy;
-                proxy.connectObject('g-properties-changed',
-                    () => this._onSensorPropertiesChanged(),
-                    'notify::g-name-owner',
-                    () => this._onSensorOwnerChanged(), this);
-                this._syncToggle();
-                if (this._sensorDesired())
-                    this._claimSensor();
-            }, cancellable);
-    }
-
-    _onSensorOwnerChanged() {
-        this._sensorGeneration++;
-        this._claimPending = false;
-        this._sensorClaimed = false;
-        this._lux = null;
-        this._targetLux = null;
-        this._stopTimer();
-        if (this._sensor?.get_name_owner() && this._sensorDesired())
-            this._claimSensor();
-        this._syncToggle();
-    }
-
-    _onSensorPropertiesChanged() {
-        if (this._sensorDesired() && !this._sensorClaimed && !this._claimPending)
-            this._claimSensor();
-        if (this._sensorClaimed)
-            this._readLux();
-        this._syncToggle();
-    }
-
-    _claimSensor() {
-        if (!this._sensorDesired() || !this._sensor?.HasAmbientLight ||
-            !this._sensor.get_name_owner() || this._sensorClaimed ||
-            this._claimPending || this._claimRetryId)
-            return;
-        this._claimPending = true;
-        const proxy = this._sensor;
-        const generation = this._sensorGeneration;
-        proxy.ClaimLightRemote((_result, error) => {
-            if (generation !== this._sensorGeneration)
-                return;
-            this._claimPending = false;
-            if (error) {
-                if (!this._destroyed)
-                    console.error(`Lux Capacitor: could not claim light sensor: ${error}`);
-                if (!this._destroyed && this._sensorDesired() && !this._claimRetryId) {
-                    this._claimRetryId = GLib.timeout_add_seconds(
-                        GLib.PRIORITY_DEFAULT, 15, () => {
-                            this._claimRetryId = 0;
-                            this._claimSensor();
-                            return GLib.SOURCE_REMOVE;
-                        });
-                }
-                this._syncToggle();
-                return;
-            }
-            if (this._destroyed || !this._sensorDesired()) {
-                // A ClaimLight response can arrive after the toggle or the
-                // extension has been turned off. Release that exact claim.
-                proxy.ReleaseLightRemote(() => {});
-                return;
-            }
-            this._sensorClaimed = true;
-            this._readLux();
-            this._syncToggle();
-        });
-    }
-
-    _releaseSensor() {
-        if (!this._sensorClaimed || !this._sensor)
-            return;
-        this._sensorClaimed = false;
-        this._sensor.ReleaseLightRemote((_result, error) => {
-            if (error && !this._destroyed)
-                console.error(`Lux Capacitor: could not release light sensor: ${error}`);
-        });
-        this._syncToggle();
-    }
-
-    _readLux() {
-        if (!this._sensorClaimed || !this._sensorDesired())
-            return;
-        const rawLevel = this._sensor.LightLevel;
-        const unit = this._sensor.LightLevelUnit;
-        if (!Number.isFinite(rawLevel) || rawLevel < 0 ||
-            !['lux', 'vendor'].includes(unit))
-            return;
-
-        if (this._anchorUnit && this._anchorUnit !== unit) {
-            this._clearAnchors();
-            this._targetLux = null;
-        }
-        this._unit = unit;
-        // SensorProxy's vendor unit is a relative 0-100 reading. Map it to
-        // the curve's 0-1600 range.
-        const lux = unit === 'vendor' ? rawLevel * 16 : rawLevel;
-        this._lux = lux;
-        // Small sensor fluctuations should not keep nudging the screen.
-        if (this._autoEnabled && significantLuxChange(this._targetLux, lux, this._sensitivity))
-            this._retarget(lux);
-        this._keyboard?.onSensorLevel(lux);
-        this._syncToggle();
-    }
-
-    _retarget(lux) {
-        this._targetLux = lux;
-        this._setTarget(preferredBrightness(lux, this._anchors, this._limits) *
-            this._batteryFactor());
-    }
-
-    _setTarget(target) {
-        if (!this._autoEnabled || !Number.isFinite(target))
-            return;
-        this._target = target;
-        if (!this._timerId) {
-            this._level = null;
-            this._lastTick = GLib.get_monotonic_time();
-            this._timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS,
-                () => this._tick());
-        }
-    }
-
-    _tick() {
-        if (!this._autoEnabled || !this._manager?.globalScale || this._target === null) {
-            this._timerId = 0;
-            return GLib.SOURCE_REMOVE;
-        }
-        const now = GLib.get_monotonic_time();
-        const dt = Math.min((now - this._lastTick) / 1_000_000, 1);
-        this._lastTick = now;
-        if (now < this._holdUntil)
-            return GLib.SOURCE_CONTINUE;
-
-        // _setBrightnessSilently skips steps smaller than EPSILON, so the
-        // slider can trail the fade. Continue from the fade's own position,
-        // or a slow fade would repeat the same skipped step forever. Start
-        // again from the slider if something else has moved it.
-        const shown = this._manager.globalScale.value;
-        const current = this._level !== null && Math.abs(this._level - shown) < EPSILON
-            ? this._level : shown;
-        let next = advanceBrightness(current, this._target, dt, this._speed);
-        const done = Math.abs(next - this._target) <= EPSILON;
-        if (done)
-            next = this._target;
-        this._level = next;
-        this._setBrightnessSilently(next);
-        if (done) {
-            this._timerId = 0;
-            return GLib.SOURCE_REMOVE;
-        }
-        return GLib.SOURCE_CONTINUE;
-    }
-
-    _stopTimer() {
-        this._timerId = removeSource(this._timerId);
     }
 
     _enforceKeyStep() {
@@ -891,7 +468,7 @@ export default class LuxCapacitorExtension extends Extension {
         if (!item.menu || !item._monitorBrightnessSection)
             return;
         const switchItem = new PopupMenu.PopupSwitchMenuItem(
-            'Auto Brightness', this._autoEnabled);
+            'Auto Brightness', this._screen.autoEnabled);
         switchItem.connect('toggled', (_item, state) => {
             if (state !== this._settings.get_boolean('enabled'))
                 this._settings.set_boolean('enabled', state);

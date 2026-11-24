@@ -22,7 +22,7 @@ for original, replacement in {
     "import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';": 'class Extension {}',
     "import * as Main from 'resource:///org/gnome/shell/ui/main.js';": 'export const Main = {};',
     "import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';": 'const PopupMenu = {};',
-    "'./brightnessModel.js'": "'../lux-capacitor@extensions/brightnessModel.js'",
+    "'./screenController.js'": "'../lux-capacitor@extensions/screenController.js'",
     "'./keyboardController.js'": "'../lux-capacitor@extensions/keyboardController.js'",
 }.items():
     assert original in source, original
