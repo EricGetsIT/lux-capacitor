@@ -15,7 +15,7 @@ import {
     significantLuxChange,
     upsertPreference,
 } from './brightnessModel.js';
-import {KeyboardController, isLevel} from './keyboardController.js';
+import {KeyboardController, isLevel, removeSource} from './keyboardController.js';
 
 const SENSOR_XML = `
 <node>
@@ -49,12 +49,6 @@ const MANUAL_HOLD_US = 1_500_000;
 const EPSILON = 0.003;
 const KEY_STEP = 0.05;
 const SAVE_DELAY_MS = 500;
-
-function removeSource(id) {
-    if (id)
-        GLib.source_remove(id);
-    return 0;
-}
 
 // Replace object[name] with wrap(original). The returned function restores
 // the original, unless something else has replaced the method since.
@@ -94,7 +88,7 @@ export default class LuxCapacitorExtension extends Extension {
         this._sensorRetryId = 0;
         this._claimRetryId = 0;
         this._sensor = null;
-        this._sensorCancellable = new Gio.Cancellable();
+        this._cancellable = new Gio.Cancellable();
         this._sensorClaimed = false;
         this._claimPending = false;
         this._sensorGeneration = 0;
@@ -187,7 +181,7 @@ export default class LuxCapacitorExtension extends Extension {
         this._sensorRetryId = removeSource(this._sensorRetryId);
         this._claimRetryId = removeSource(this._claimRetryId);
         this._releaseSensor();
-        this._sensorCancellable?.cancel();
+        this._cancellable?.cancel();
 
         if (this._sensor) {
             this._sensor.disconnectObject(this);
@@ -210,7 +204,7 @@ export default class LuxCapacitorExtension extends Extension {
         this._manager = null;
         this._settings = null;
         this._powerSettings = null;
-        this._sensorCancellable = null;
+        this._cancellable = null;
     }
 
     // Move values an earlier release stored under the old settings path.
@@ -470,12 +464,12 @@ export default class LuxCapacitorExtension extends Extension {
     }
 
     _connectUPower() {
-        const cancellable = this._sensorCancellable;
+        const cancellable = this._cancellable;
         new UPowerProxy(Gio.DBus.system, 'org.freedesktop.UPower',
             '/org/freedesktop/UPower', (proxy, error) => {
                 // A request cancelled by disable() can finish after a quick
                 // re-enable; it belongs to the previous session.
-                if (this._destroyed || cancellable !== this._sensorCancellable)
+                if (this._destroyed || cancellable !== this._cancellable)
                     return;
                 if (error) {
                     console.error(`Lux Capacitor: power status unavailable: ${error}`);
@@ -568,10 +562,10 @@ export default class LuxCapacitorExtension extends Extension {
     }
 
     _connectSensor() {
-        const cancellable = this._sensorCancellable;
+        const cancellable = this._cancellable;
         new SensorProxy(Gio.DBus.system, 'net.hadess.SensorProxy',
             '/net/hadess/SensorProxy', (proxy, error) => {
-                if (this._destroyed || cancellable !== this._sensorCancellable)
+                if (this._destroyed || cancellable !== this._cancellable)
                     return;
                 if (error) {
                     console.error(`Lux Capacitor: light sensor unavailable: ${error}`);

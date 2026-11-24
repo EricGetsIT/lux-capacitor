@@ -5,6 +5,14 @@ import GObject from 'gi://GObject';
 import {KeyboardController, automaticKeyboardTarget, fromHardware, toHardware} from '../lux-capacitor@extensions/keyboardController.js';
 import Extension, {Main} from './extension-fixture.mjs';
 
+const KeyboardControl = GObject.registerClass({Properties: {
+    value: GObject.ParamSpec.int('value', null, null, GObject.ParamFlags.READWRITE, 0, 100, 0),
+}}, class KeyboardControl extends GObject.Object {
+    _init() { super._init(); this._value = 0; }
+    get value() { return this._value; }
+    set value(v) { this._value = v; this.notify('value'); }
+});
+
 function assert(value, message) {
     if (!value)
         throw new Error(message);
@@ -215,15 +223,8 @@ test('A stale hardware read cannot overwrite a newer desktop brightness notifica
 });
 
 test('Retained Quick Settings UI displays restored-controller percentages without writing back', () => {
-    const Control = GObject.registerClass({Properties: {
-        value: GObject.ParamSpec.int('value', null, null, GObject.ParamFlags.READWRITE, 0, 100, 0),
-    }}, class Control extends GObject.Object {
-        _init() { super._init(); this._value = 0; }
-        get value() { return this._value; }
-        set value(v) { this._value = v; this.notify('value'); }
-    });
-    const slider = new Control();
-    const discrete = new Control();
+    const slider = new KeyboardControl();
+    const discrete = new KeyboardControl();
     let feedbackWrites = 0;
     const item = {_sliderItem: slider, _discreteItem: discrete,
         _sliderItemChangedId: slider.connect('notify::value', () => feedbackWrites++),
@@ -865,17 +866,10 @@ test('The keyboard tile turns the light off and back on at the last chosen level
 });
 
 test('The keyboard tile click goes through the controller and is restored on disable', () => {
-    const Control = GObject.registerClass({Properties: {
-        value: GObject.ParamSpec.int('value', null, null, GObject.ParamFlags.READWRITE, 0, 100, 0),
-    }}, class TileControl extends GObject.Object {
-        _init() { super._init(); this._value = 0; }
-        get value() { return this._value; }
-        set value(v) { this._value = v; this.notify('value'); }
-    });
     const Tile = GObject.registerClass({Signals: {clicked: {}}},
         class KeyboardTile extends GObject.Object {});
-    const slider = new Control();
-    const discrete = new Control();
+    const slider = new KeyboardControl();
+    const discrete = new KeyboardControl();
     slider._slider = {connect: () => 1, disconnect() {}};
     const item = new Tile();
     Object.assign(item, {_sliderItem: slider, _discreteItem: discrete, subtitle: 'native',
