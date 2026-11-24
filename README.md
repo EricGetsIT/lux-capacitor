@@ -34,7 +34,7 @@ I installed this repeatedly on the same Framework laptop while switching between
 - A settings window (Extensions app → Lux Capacitor → Settings) with transition speed, light sensitivity, minimum and maximum Auto brightness, slight dimming on battery, a graph of the learned brightness curve, and a reset button.
 - Keyboard settings: turn the light off after a chosen idle time (only when Auto turned it on), and the light level below which keyboard Auto lights the keyboard. Fn+Space and the keyboard slider still switch to a manual level and turn keyboard Auto off.
 - Fn+Space steps through 0%, 20%, 50%, 75%, and 100%, and turns keyboard Auto off. The laptop's firmware handles Fn+Space itself with its own levels, so its level can flash for a moment (under about 75 ms) before Lux Capacitor sets the step. After 10 seconds without input or a keyboard light change, Lux Capacitor checks the keyboard less often to save power, so the first press after that can flash for up to about 0.3 s.
-- Numeric brightness and volume displays, with brightness and volume OSD bars updating immediately as the Quick Settings sliders move; volume keys use steps of 5.
+- Numeric brightness and volume displays (can be turned off in Settings), with brightness and volume OSD bars updating immediately as the Quick Settings sliders move; volume keys use steps of 5.
 - Desktop idle dimming preserves keyboard Auto.
 - Resume recovery reinitializes the Framework `i2c-FRMW0005:*` sensor and restarts iio-sensor-proxy. On other hardware the hook only restarts the sensor service.
 
@@ -78,6 +78,12 @@ To teach screen Auto, keep it on and move the brightness slider or press the bri
 | Turn off when idle | When keyboard Auto has the light on and you stop typing and using the mouse for this long (5 s, 10 s, 30 s, 1 min, or 5 min), the light fades out, and it comes back on your next input. It needs keyboard Auto on and never changes a level you set yourself. | Off |
 | Dark threshold | Keyboard Auto turns the light on when the room is darker than this many lux, and off again once it is 2.5 times brighter (25 lux by default); the gap prevents flickering. The keyboard brightness curve scales with it. | 10 lux |
 | Reset Keyboard Settings | Sets the idle timeout back to Off and the dark threshold back to 10 lux. | — |
+
+### Popups
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Show percentages | Adds the level as a number to the brightness, volume and keyboard popups. Turn it off to keep GNOME's popups without numbers; the bars still follow the sliders immediately. | On |
 
 Fn+Space steps through 0%, 20%, 50%, 75%, and 100%. Fn+Space, the Quick Settings keyboard slider, and the Keyboard tile all set a manual level and turn keyboard Auto off; turn it back on with the Auto switch in Quick Settings. Clicking the Keyboard tile turns the light off, or back on at the last level you chose (100% until you choose one). The screen and keyboard Auto switches are independent.
 

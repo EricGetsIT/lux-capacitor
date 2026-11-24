@@ -238,6 +238,7 @@ test('Retained Quick Settings UI displays restored-controller percentages withou
         'display update changed brightness or Auto');
     const displayed = [];
     Main.osdWindowManager = {showAll(_icon, label, level) { displayed.push([label, level]); }};
+    e._settings = {get_boolean: () => true};
     e._showKeyboardOSD(50);
     assert(displayed[0][0] === '50%' && displayed[0][1] === 0.5, 'numeric popup was lost');
 });
@@ -344,6 +345,7 @@ test('Brightness and volume OSD bars follow rapid reversals immediately and rest
         Main.osdWindowManager = manager;
         const original = manager._showOsdWindow;
         const e = new Extension();
+        e._settings = {get_boolean: () => true};
         e._patchSpeakerOSD();
         for (const [monitor, name] of [[0, 'display-brightness-symbolic'], [1, 'audio-volume-high-symbolic']]) {
             const icon = new Gio.ThemedIcon({name});
@@ -367,6 +369,28 @@ test('Brightness and volume OSD bars follow rapid reversals immediately and rest
         assert(manager._showOsdWindow === original && Object.hasOwn(manager, '_showOsdWindow') === ownHandler,
             'Disable did not restore original OSD behavior');
     }
+});
+
+test('Turning off percentages leaves the popups without numbers but keeps their bars', () => {
+    const e = new Extension();
+    e._settings = {get_boolean: key => key !== 'show-osd-numbers'};
+    const bar = {value: 0, remove_transition() {}};
+    const labels = [];
+    const windows = [{_level: bar, setLabel: label => labels.push(['set', label])}];
+    Main.osdWindowManager = Object.assign(Object.create({
+        _showOsdWindow(_monitor, _icon, label) { labels.push(['window', label]); },
+    }), {_osdWindows: windows, showAll(_icon, label) { labels.push(['keyboard', label]); }});
+    e._patchSpeakerOSD();
+    Main.osdWindowManager._showOsdWindow(0, new Gio.ThemedIcon({name: 'audio-volume-high-symbolic'}), null, 0.6, 1);
+    assert(bar.value === 0.6, 'the volume bar no longer follows the slider');
+    e._manager = {_showOSD() {}};
+    e._patchBrightnessOSD();
+    e._manager._showOSD([{value: 0.4, monitor: {get_number: () => 0}}]);
+    e._showKeyboardOSD(50);
+    assert(JSON.stringify(labels) === JSON.stringify([['window', null], ['keyboard', null]]),
+        `numbers were still shown: ${JSON.stringify(labels)}`);
+    e._restoreBrightnessOSD();
+    e._restoreSpeakerOSD();
 });
 
 function screenFixture(anchors = '[]') {

@@ -52,6 +52,10 @@
       <default>false</default>
       <summary>Slightly dim the screen while on battery power</summary>
     </key>
+    <key name="show-osd-numbers" type="b">
+      <default>true</default>
+      <summary>Show percentages on the brightness, volume and keyboard popups</summary>
+    </key>
     <key name="keyboard-idle-timeout" type="i">
       <range min="0" max="3600"/>
       <default>0</default>

@@ -206,6 +206,13 @@ export default class LuxCapacitorPreferences extends ExtensionPreferences {
         keyboard.add(resetKeyboard);
         page.add(keyboard);
 
+        const popups = new Adw.PreferencesGroup({title: 'Popups'});
+        const numbers = new Adw.SwitchRow({title: 'Show percentages',
+            subtitle: 'Numbers on the brightness, volume and keyboard popups'});
+        settings.bind('show-osd-numbers', numbers, 'active', Gio.SettingsBindFlags.DEFAULT);
+        popups.add(numbers);
+        page.add(popups);
+
         window.add(page);
         window.connect('close-request', () => {
             for (const [object, id] of connections.splice(0))

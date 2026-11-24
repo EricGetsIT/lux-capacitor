@@ -563,7 +563,8 @@ export default class LuxCapacitorExtension extends Extension {
             level > 0 ? 'keyboard-brightness-high-symbolic' : 'keyboard-brightness-off-symbolic',
             'display-brightness-symbolic',
         ]);
-        Main.osdWindowManager.showAll(icon, `${level}%`, level / 100, 1);
+        Main.osdWindowManager.showAll(icon, this._showNumbers() ? `${level}%` : null,
+            level / 100, 1);
     }
 
     _connectSensor() {
@@ -773,12 +774,18 @@ export default class LuxCapacitorExtension extends Extension {
         this._originalKeySteps.clear();
     }
 
+    _showNumbers() {
+        return this._settings.get_boolean('show-osd-numbers');
+    }
+
     _patchBrightnessOSD() {
         const manager = this._manager;
         this._restoreShowOSD = patchMethod(manager, '_showOSD', original => scales => {
             // The input can be an iterator, so retain it for the numeric labels.
             const shownScales = [...scales];
             original.call(manager, shownScales);
+            if (!this._showNumbers())
+                return;
             for (const scale of shownScales) {
                 const monitor = scale.monitor.get_number();
                 Main.osdWindowManager._osdWindows[monitor]?.setLabel(
@@ -799,7 +806,7 @@ export default class LuxCapacitorExtension extends Extension {
                 const names = icon?.get_names?.() ?? [];
                 const isSpeaker = names.some(name =>
                     /^audio-volume-(muted|low|medium|high|overamplified)(-symbolic)?$/.test(name));
-                const shownLabel = isSpeaker && Number.isFinite(level)
+                const shownLabel = isSpeaker && Number.isFinite(level) && this._showNumbers()
                     ? String(Math.round(level * 100)) : label;
                 const result = original.call(manager,
                     monitorIndex, icon, shownLabel, level, maxLevel);

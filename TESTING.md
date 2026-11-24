@@ -40,6 +40,8 @@ Version 0.2.6 also watches the lid through UPower. With logind's default setting
 
 On 2026-11-23 I tested both docked keyboard cases on my Framework Laptop 13 (AMD Ryzen AI 300 Series) with Ubuntu 26.04.1 and GNOME Shell 50.1, using the keyboard controller from commit `e16c7fd`. With the lid closed, the keyboard stayed off while I changed the manual level in Quick Settings. Opening the lid applied the selected level. In a separate close/open cycle with keyboard Auto enabled, the backlight resumed following ambient light after I opened the lid. With the lid open and the keyboard backlight at 20%, I left the laptop idle for 10 seconds and pressed Fn+Space once. The backlight settled at 50%.
 
+On 2026-11-24, on the same laptop (Ubuntu 26.04.1, GNOME Shell 50.1), turning off **Show percentages** removed the numbers from the brightness, volume and keyboard popups, and their bars still followed the sliders.
+
 My other Ubuntu 0.2.x hardware checks covered battery dimming, settings migration, and the lock screen with 0.2.6.
 
 I used the same Framework Laptop 13 (AMD Ryzen AI 300 Series) for Fedora Workstation 45 (GNOME Shell 51.0), Fedora Workstation 44 (GNOME Shell 50.6), and Ubuntu 26.04.1 (GNOME Shell 50.1). I haven't tested other Framework models. On Fedora Workstation 44 I confirmed the following on 2026-10-11:
