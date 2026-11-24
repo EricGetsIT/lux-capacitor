@@ -60,7 +60,7 @@ export const MANUAL_LEVELS = Object.freeze([0, 20, 50, 75, 100]);
 // so 100% is written to the hardware as 99%, which looks the same.
 const HARDWARE_MAX = 99;
 
-function removeSource(id) {
+export function removeSource(id) {
     if (id)
         GLib.source_remove(id);
     return 0;
@@ -100,20 +100,23 @@ function previousLevel(current) {
         MANUAL_LEVELS[0];
 }
 
+function validateLux(lux) {
+    if (!Number.isFinite(lux) || lux < 0)
+        throw new RangeError('lux must be a finite nonnegative number');
+}
+
 /**
  * Keyboard illumination decreases with ambient light. Use a log-lux scale so
  * small changes in a dim room matter more than similar changes in daylight.
  */
 export function keyboardTarget(lux) {
-    if (!Number.isFinite(lux) || lux < 0)
-        throw new RangeError('lux must be a finite nonnegative number');
+    validateLux(lux);
     return interpolateLogLux(AUTO_CURVE, lux);
 }
 
 /** Keep the light off until it is quite dark, with a gap to prevent flicker. */
 export function automaticKeyboardTarget(lux, wasLit = false, darkLux = DEFAULT_DARK_LUX) {
-    if (!Number.isFinite(lux) || lux < 0)
-        throw new RangeError('lux must be a finite nonnegative number');
+    validateLux(lux);
     const scaled = lux * DEFAULT_DARK_LUX / darkLux;
     const lit = wasLit ? lux < darkLux * OFF_RATIO : lux <= darkLux;
     return {lit, target: lit ? keyboardTarget(scaled) : 0};

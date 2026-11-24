@@ -60,13 +60,13 @@ def build():
         if p.is_file() and p.name != 'gschemas.compiled')
     files += extension
     hashes = {str(p.relative_to(SOURCE)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
-    manifest = SOURCE / 'SHA256SUMS'
-    manifest.write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(hashes.items())))
+    manifest_path = SOURCE / 'SHA256SUMS'
+    manifest = ''.join(f'{digest}  {name}\n' for name, digest in sorted(hashes.items())).encode()
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode='w', format=tarfile.USTAR_FORMAT) as archive:
-        for path in sorted(files + [manifest]):
+        for path in sorted(files + [manifest_path]):
             name = path.relative_to(SOURCE)
-            data = path.read_bytes()
+            data = manifest if path == manifest_path else path.read_bytes()
             entry = tarfile.TarInfo(f'Lux-Capacitor/{name}')
             entry.size = len(data)
             entry.mode = 0o755 if path.suffix == '.sh' or path.name.startswith('90-') else 0o644
