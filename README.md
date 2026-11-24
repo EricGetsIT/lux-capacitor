@@ -59,12 +59,16 @@ Open **Lux Capacitor** from the application menu to change settings. It has the 
 
 KDE support is new in 0.3.0 and is marked beta until it has been tested on more systems.
 
+<p>
+  <img src="screenshots/settings-kde.png" alt="Lux Capacitor settings app on KDE Plasma with Screen and Keyboard Auto switches above the screen options, the learned brightness graph and the keyboard options" width="420">
+</p>
+
 ## Settings
 
 On GNOME, open Extensions, then Lux Capacitor → Settings, or run `gnome-extensions prefs lux-capacitor@extensions`. On Plasma, open **Lux Capacitor** from the application menu. This screenshot uses two example adjustments in the graph.
 
 <p>
-  <img src="screenshots/settings-window.png" alt="Lux Capacitor settings window with screen options, a learned brightness graph, and keyboard options" width="420">
+  <img src="screenshots/settings-window.png" alt="Lux Capacitor settings window on GNOME with screen options, a learned brightness graph, keyboard options and popup options" width="420">
 </p>
 
 ### Screen
