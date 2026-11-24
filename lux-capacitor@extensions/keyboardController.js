@@ -174,6 +174,8 @@ export class KeyboardController {
     }
 
     get currentLevel() {
+        if (this._lidClosed && !this._autoEnabled && this._lidLevel !== null)
+            return this._lidLevel;
         return this._currentLevel;
     }
 
@@ -450,7 +452,9 @@ export class KeyboardController {
         if (!this._enabled)
             return;
         if (this._lidClosed) {
-            this._lidLevel = this._autoEnabled ? null : this._lastActual ?? this._currentLevel;
+            this._lidLevel = this._autoEnabled ? null :
+                this._desiredWrite ?? this._writeInFlight ?? this._lastActual ?? this._currentLevel;
+            this._pendingManualOSD = null;
             this._stopRamp();
             this._lux = null;
             this._autoLit = false;
@@ -458,9 +462,8 @@ export class KeyboardController {
             this._smoothLevel = 0;
             this._requestWrite(0);
         } else if (!this._autoEnabled && isLevel(this._lidLevel)) {
-            // Auto waits for a fresh reading from the reopened sensor.
-            this._smoothLevel = this._lidLevel;
-            this._requestWrite(this._lidLevel);
+            // The off reading from closing the lid may still be in transit.
+            this.setManualLevel(this._lidLevel, false, 'lid opened', 0);
         }
         this._changed();
     }
@@ -484,6 +487,11 @@ export class KeyboardController {
         if (next > 0)
             this._lastLitLevel = next;
         this.setAutoEnabled(false, reason);
+        if (this._lidClosed) {
+            this._lidLevel = next;
+            this._changed();
+            return;
+        }
         this._pendingManualOSD = showOSD ? next : null;
         this._smoothLevel = next;
         this._settleUntil = GLib.get_monotonic_time() + HOTKEY_SETTLE_US;
@@ -493,7 +501,7 @@ export class KeyboardController {
 
     /** The Quick Settings tile: turn a lit keyboard off, or a dark one back on. */
     toggleLight() {
-        const lit = (this._currentLevel ?? 0) > 0;
+        const lit = (this.currentLevel ?? 0) > 0;
         this.setManualLevel(lit ? 0 : this._lastLitLevel, false, 'keyboard tile');
     }
 
@@ -504,13 +512,15 @@ export class KeyboardController {
         this._autoEnabled = enabled;
         if (enabled) {
             this._pendingManualOSD = null;
+            this._lidLevel = null;
             this._smoothLevel = this._lastActual ?? this._currentLevel;
             this._autoLit = false;
             this._retargetFromSensor();
         } else {
             this._stopWakeHold();
             this._stopRamp();
-            this._desiredWrite = null;
+            if (!this._lidClosed)
+                this._desiredWrite = null;
             this._target = null;
             this._autoLit = false;
             this._lux = null;
@@ -575,7 +585,7 @@ export class KeyboardController {
             this._currentLevel = actual ?? level;
             if (this._smoothLevel === null)
                 this._smoothLevel = actual ?? level;
-            if (this._wakeHoldId || this._waitingForWakeLux)
+            if (this._lidClosed || this._wakeHoldId || this._waitingForWakeLux)
                 this._desiredWrite = 0;
             if (actual !== null && actual !== level && !this._autoEnabled &&
                 this._desiredWrite === null)
@@ -616,7 +626,12 @@ export class KeyboardController {
         const rawLevel = fromHardware(hardwareLevel);
         this._notificationSerial++;
 
-        if (source === 'set property' && this._consumeOwnWrite(rawLevel)) {
+        const ownWrite = source === 'set property' && this._consumeOwnWrite(rawLevel);
+        if (this._lidClosed) {
+            this._observeClosedLidLevel(rawLevel);
+            return;
+        }
+        if (ownWrite) {
             this._currentLevel = rawLevel;
             this._lastActual = rawLevel;
             this._changed();
@@ -689,6 +704,10 @@ export class KeyboardController {
             return;
         level = fromHardware(level);
         this._notificationSerial++;
+        if (this._lidClosed) {
+            this._observeClosedLidLevel(level);
+            return;
+        }
         if (this._hasOwnWrite(level))
             return;
         // GNOME dims/restores through UPower without a keyboard-proxy signal.
@@ -749,7 +768,25 @@ export class KeyboardController {
         });
     }
 
+    // The daemon or firmware may restore the light while docked. Hardware
+    // reports must never overwrite a choice made in Quick Settings.
+    _observeClosedLidLevel(level) {
+        const changed = this._lastActual !== level;
+        if (!this._autoEnabled && this._lidLevel === null)
+            this._lidLevel = level;
+        this._lastActual = level;
+        this._currentLevel = level;
+        if (level > 0 && changed && this._writeInFlight !== 0 && this._desiredWrite !== 0)
+            this._requestWrite(0);
+        if (changed)
+            this._changed();
+    }
+
     _onActualLevel(level) {
+        if (this._lidClosed) {
+            this._observeClosedLidLevel(level);
+            return;
+        }
         const dimming = this._isDimming();
         if (dimming && this._autoEnabled) {
             this._stopRamp();

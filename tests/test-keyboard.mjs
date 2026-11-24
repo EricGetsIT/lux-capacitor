@@ -30,6 +30,8 @@ function fixture(auto = true, level = 0) {
         _currentLevel: level, _smoothLevel: level});
     c._startRamp = () => {};
     c._stopRamp = () => {};
+    // These tests supply hardware readings directly. The polling test uses its own controller.
+    c._keepPollingFast = () => {};
     c._requestWrite = value => {
         writes.push(value);
         c._lastRequested = value;
@@ -497,6 +499,52 @@ test('A closed lid turns a manual keyboard level off and restores it on opening'
     c.setLidClosed(true);
     c.setLidClosed(false);
     assert(!settings.value && writes.join() === '0,50', `manual level not restored: ${writes.join()}`);
+});
+
+test('The docked slider and tile edit the level to restore on opening', () => {
+    for (const auto of [false, true]) {
+        const {c, settings, writes} = fixture(auto, 50);
+        c.setLidClosed(true);
+        acknowledge(c, 0);
+        c.setManualLevel(20);
+        c.setManualLevel(75);
+        assert(!settings.value && c.currentLevel === 75, 'slider lost the docked selection');
+        c.toggleLight();
+        assert(c.currentLevel === 0, 'tile did not clear the docked selection');
+        c.toggleLight();
+        assert(c.currentLevel === 75, 'tile did not restore the docked selection');
+        assert(writes.join() === '0', 'a docked control lit the closed keyboard');
+        c.setLidClosed(false);
+        assert(writes.join() === '0,75', 'opening did not apply the latest selection');
+    }
+});
+
+test('Backlight reports while docked cannot replace a pending choice or disable Auto', () => {
+    for (const auto of [false, true]) {
+        const {c, settings, writes} = fixture(auto, 50);
+        c.setLidClosed(true);
+        acknowledge(c, 0);
+        for (const report of [() => c._onPowerSignal(50, 'external'),
+            () => c._onActualLevel(50), () => acknowledge(c, 50)]) {
+            report();
+            assert(writes.at(-1) === 0 && settings.value === auto, 'a docked report took manual control');
+            acknowledge(c, 0);
+        }
+        assert(writes.join() === '0,0,0,0', 'restored hardware levels were left on while docked');
+        c.setLidClosed(false);
+        assert(writes.at(-1) === (auto ? 0 : 50), 'a docked report changed the restore level');
+    }
+});
+
+test('A late off reading after reopening keeps the selected manual level', () => {
+    const {c, writes} = fixture(false, 50);
+    c.setLidClosed(true);
+    c.setManualLevel(75);
+    c.setLidClosed(false);
+    c._onActualLevel(0);
+    acknowledge(c, 75);
+    assert(writes.join() === '0,75' && c.currentLevel === 75,
+        'the late lid-close reading was remapped as a keyboard shortcut');
 });
 
 test('Closing the lid releases the light sensor and opening it resumes screen Auto', () => {

@@ -130,10 +130,24 @@ earlier = Gio.Settings.new_full(schema_source.lookup('org.gnome.shell.extensions
     settings("brightness.set_string('anchors', '[{\"lux\":40,\"brightness\":0.7}]')\nGio.Settings.sync()\n")
     print('PASS: settings and backups stored under the earlier name move to the current one, and newer values win')
 
+    settings("shell.set_boolean('disable-user-extensions', False)\nGio.Settings.sync()")
+    log.write_text('')
     gnome51 = install('51.0')
     assert gnome51.returncode == 0, gnome51.stdout + gnome51.stderr
     assert (target / 'extension.js').read_bytes() == (source / UUID / 'extension.js').read_bytes()
     state = json.loads(settings("print(json.dumps(brightness.get_string('anchors')))"))
     assert state == '[{"lux":40,"brightness":0.7}]', 'GNOME 51 install lost settings'
+    assert settings("print(shell.get_boolean('disable-user-extensions'))") == 'False'
+    assert f'extensions enable {UUID}' in log.read_text(), 'Active extensions did not get live activation'
     print('PASS: GNOME 51 install succeeds and keeps settings')
+    # Someone who turned off all user extensions can choose when to activate them.
+    settings("shell.set_boolean('disable-user-extensions', True)\nshell.set_strv('enabled-extensions', ['other@example.com'])\nGio.Settings.sync()")
+    log.write_text('')
+    paused = install()
+    assert paused.returncode == 0, paused.stdout + paused.stderr
+    state = json.loads(settings("print(json.dumps([shell.get_boolean('disable-user-extensions'), shell.get_strv('enabled-extensions')]))"))
+    assert state == [True, ['other@example.com', UUID]], 'Installer overrode the master switch or lost an extension'
+    assert f'extensions enable {UUID}' not in log.read_text(), 'Installer requested live activation while extensions were off'
+    assert 'turn on' in paused.stdout.lower() and 'extensions app' in paused.stdout.lower(), 'Missing activation instructions'
+    print('PASS: installation preserves the disabled master switch and explains how to activate later')
     print('NOTE: package installation, privileged resume-hook installation, and live GNOME Shell activation were mocked; no physical hardware was tested.')

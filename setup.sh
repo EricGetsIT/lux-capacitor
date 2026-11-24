@@ -87,7 +87,6 @@ for key in keys.list_keys():
         earlier.reset(key)
 Gio.Settings.new('org.gnome.settings-daemon.plugins.media-keys').set_int('volume-step', 5)
 settings = Gio.Settings.new('org.gnome.shell')
-settings.set_boolean('disable-user-extensions', False)
 uuid = sys.argv[1]
 legacy = sys.argv[3:]
 enabled = [x for x in settings.get_strv('enabled-extensions') if x not in legacy]
@@ -98,5 +97,10 @@ settings.set_strv('disabled-extensions', [x for x in settings.get_strv('disabled
                                           if x != uuid and x not in legacy])
 Gio.Settings.sync()
 PY
-gnome-extensions enable "$uuid" || true
+extensions_disabled=$(gsettings get org.gnome.shell disable-user-extensions)
+if [[ "$extensions_disabled" == true ]]; then
+    echo 'To activate Lux Capacitor, turn on the master switch in the Extensions app when you are ready.'
+else
+    gnome-extensions enable "$uuid" || true
+fi
 printf '\nInstalled extension and automatic sensor recovery after resume.\nExisting brightness preferences were preserved.\nLog out and back in to load the extension files.\nBackup: %s\n' "$save"

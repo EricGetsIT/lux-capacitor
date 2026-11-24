@@ -28,6 +28,8 @@ for original, replacement in {
     source = source.replace(original, replacement)
 Path('tests/extension-fixture.mjs').write_text(source)
 PY
+# GJS logs uncaught main-loop callback exceptions as GLib criticals.
+export G_DEBUG="${G_DEBUG:+$G_DEBUG,}fatal-criticals"
 gjs -m tests/test-model.mjs
 gjs -m tests/test-keyboard.mjs
 

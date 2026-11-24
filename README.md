@@ -28,7 +28,7 @@ I installed this repeatedly on the same Framework laptop while switching between
 - Learned preferences persist across logins and reboots. Turning screen Auto off resets them to the default curve.
 - Separate screen and keyboard Auto controls.
 - Keeps working on the lock screen, so waking the laptop in a dark room never lights the screen up at full brightness. The Auto switches are hidden until you unlock.
-- Knows when the lid is closed. When the laptop keeps running with the lid shut (for example, docked to an external monitor), it releases the light sensor, which would otherwise read the darkness under the lid, and turns the keyboard light off. Everything resumes when you open the lid.
+- Knows when the lid is closed. When the laptop keeps running with the lid shut (for example, docked to an external monitor), it releases the light sensor, which would otherwise read the darkness under the lid, and turns the keyboard light off. While docked, the keyboard slider and tile let you choose the level to apply when you open the lid.
 - A settings window (Extensions app → Lux Capacitor → Settings) with transition speed, light sensitivity, minimum and maximum Auto brightness, slight dimming on battery, a graph of the learned brightness curve, and a reset button.
 - Keyboard settings: turn the light off after a chosen idle time (only when Auto turned it on), and the light level below which keyboard Auto lights the keyboard. Fn+Space and the keyboard slider still switch to a manual level and turn keyboard Auto off.
 - Fn+Space steps through 0%, 20%, 50%, 75%, and 100%, and turns keyboard Auto off. The laptop's firmware handles Fn+Space itself with its own levels, so its level can flash for a moment (under about 75 ms) before Lux Capacitor sets the step. After 10 seconds without input or a keyboard light change, Lux Capacitor checks the keyboard less often to save power, so the first press after that can flash for up to about 0.3 s.
@@ -93,6 +93,8 @@ bash Install-Lux-Capacitor.run
 The installer checks for GNOME Shell 50 or 51, installs dependencies using apt on Ubuntu or dnf on Fedora, and requests sudo for the system resume hook. Log out and back in afterward. Both Auto controls start enabled on a fresh installation. Existing brightness settings are preserved; the volume step is set to 5.
 
 From a source checkout, run `bash install.sh` instead.
+
+The source installer preserves GNOME’s master extensions switch. If you turned it off, turn it on in the Extensions app when you’re ready to use Lux Capacitor and your other enabled extensions.
 
 The extension ZIP can also be installed with `gnome-extensions install --force <file>.shell-extension.zip`, followed by logout/login and `gnome-extensions enable lux-capacitor@extensions`. This installs the extension only: it does not install dependencies, set the volume step, or install the system resume hook.
 

@@ -73,4 +73,5 @@ This is the checklist I use for a clean-install hardware test on each supported 
 9. Disable and enable the extension. Check that native GNOME controls work while disabled.
 10. Open the settings window. Change each option and confirm the screen and keyboard respond; reset learned brightness and the keyboard settings. With an idle timeout set, stop typing in the dark and confirm the keyboard light fades out and returns on input, and that Fn+Space still advances exactly one preset.
 11. Inspect `journalctl --user -b` for extension errors and `systemctl status iio-sensor-proxy` for sensor errors.
+12. With an external monitor attached and the laptop awake, close the lid and adjust the keyboard slider and tile. Confirm the keyboard stays off while closed and restores the last selected level on opening. For a second close/open cycle, leave keyboard Auto on and confirm it responds to the first fresh light reading.
 
