@@ -41,6 +41,32 @@ function keyboardFixture(max = 200, initial = Math.round(max / 2)) {
     return {keyboard, writes};
 }
 
+test('Without an idle monitor the keyboard is read less often after 10 s without a change', () => {
+    const settings = {ints: {'keyboard-idle-timeout': 0, 'keyboard-dark-lux': 10},
+        get_boolean: () => false, get_int(key) { return this.ints[key]; }};
+    const c = new KeyboardController({settings, backend: 'upower', idleMonitor: null});
+    c._file = {load_contents_async() {}};
+    Object.assign(c, {_enabled: true, _pollStopped: false, _userIdle: false, _available: true});
+    c._requestWrite = () => {};
+    c.setAutoEnabled = () => {};
+    c._setPollInterval(50);
+    c._watchPollIdle();
+    c._keepPollingFast();
+    assert(c._pollMs === 50 && c._pollSlowId, 'polling did not start fast with a slowdown pending');
+    // Fire the 10 s slowdown now instead of waiting for it.
+    GLib.source_remove(c._pollSlowId);
+    c._pollSlowId = 0;
+    if (c._userIdle)
+        c._setPollInterval(250);
+    assert(c._pollMs === 250, 'polling did not slow down without an idle monitor');
+    c._onActualLevel(0);
+    c._onActualLevel(20);
+    assert(c._pollMs === 50, 'a keyboard change did not restore fast polling');
+    c._pollSlowId = GLib.source_remove(c._pollSlowId) && 0;
+    c._pollId = GLib.source_remove(c._pollId) && 0;
+    c._unwatchPollIdle();
+});
+
 test('UPower supplies the initial keyboard level and scales writes and echoes', () => {
     const {keyboard, writes} = keyboardFixture();
     assert(keyboard.available && keyboard.currentLevel === 50, 'initial UPower level');

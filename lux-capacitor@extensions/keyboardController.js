@@ -327,8 +327,12 @@ export class KeyboardController {
     }
 
     _watchPollIdle() {
-        if (!this._idleMonitor)
+        // Plasma on Wayland reports no idle time, so 10 s without a keyboard
+        // light change is enough to read less often there.
+        if (!this._idleMonitor) {
+            this._userIdle = true;
             return;
+        }
         this._pollIdleWatchId = this._idleMonitor.add_idle_watch(POLL_IDLE_AFTER_MS, () => {
             this._userIdle = true;
             if (!this._pollSlowId)
